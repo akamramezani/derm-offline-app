@@ -1,0 +1,1466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><script src="offline-shim.js"></script><script src="derm-engine.js"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dermatology Differential Engine &mdash; MedConsults</title>
+<meta name="description" content="A clinician decision-support tool: shortlist a dermatological differential from the presentation, discriminate with weighted findings, and confirm with the right test." />
+<link rel="canonical" href="https://www.medconsults.ai/dermatology-differential-engine.html" />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
+<link rel="icon" href="/favicon-16.png" sizes="16x16" type="image/png" />
+<link rel="apple-touch-icon" href="/apple-touch-icon-180.png" />
+<meta name="theme-color" content="#0F766C" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="Dermatology Differential Engine — MedConsults" />
+<meta property="og:description" content="Shortlist, discriminate, confirm — a structured dermatological differential for clinicians." />
+<meta property="og:url" content="https://www.medconsults.ai/dermatology-differential-engine.html" />
+<meta property="og:image" content="/og-dermatology-differential-engine.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Dermatology Differential Engine for clinicians. MedConsults" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="/og-dermatology-differential-engine.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="/external/fonts.googleapis.com/css2__ac50ba22.css" rel="stylesheet">
+<style>
+/* ============================================================
+   Palette is taken from the dermatologist's own instrument:
+   the H&E slide. Hematoxylin purple carries structure,
+   eosin pink carries emphasis. Crimson is reserved, always
+   and only, for the things that must not be missed.
+   ============================================================ */
+:root{
+  --paper:#FAF8F6; --ground:#E9E4EA; --line:#D5CCD8; --line2:#E6DFE9;
+  --ink:#1F1823; --ink2:#5A5061; --ink3:#6A6273;
+  --hema:#3E2352; --hema-soft:#EFE7F4; --hema-mid:#5C3E71; --hema-pale:#F7F3FA;
+  --eosin:#C25E77; --eosin-ink:#A8455F; --eosin-soft:#FBEEF1;
+  --lead:#3E2352; --plaus:#7A5A8C; --tail:#9A93A2; --tail-ink:#6E6779;
+  --confirm:#2C6E63; --exclude:#B0761A; --exclude-ink:#8A5C10;
+  --urgent:#9E1B32; --urgent-soft:#FBEAEE;
+  --disp:'Bricolage Grotesque',ui-sans-serif,system-ui,sans-serif;
+  --body:'Public Sans',ui-sans-serif,system-ui,sans-serif;
+  --mono:'DM Mono',ui-monospace,Menlo,monospace;
+  --r:10px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--ground);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
+h1,h2,h3{margin:0;font-family:var(--disp);font-weight:700;letter-spacing:-.02em;line-height:1.1}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2.5px solid var(--eosin);outline-offset:2px;border-radius:3px}
+
+/* ---------- masthead ---------- */
+header.top{background:var(--hema);color:#EFE7F4;padding:15px 18px 16px}
+header.top.acute{border-bottom:4px solid var(--urgent)}
+.top-in{max-width:1200px;margin:0 auto;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.top h1{font-size:22px;font-weight:800;color:#fff}
+.top .ed{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#B9A5C6}
+.top .say{width:100%;font-size:13.5px;color:#CFC0D8;margin:6px 0 0;max-width:70ch}
+
+/* ---------- progress rail ---------- */
+.rail{background:var(--hema-mid)}
+.rail-in{max-width:1200px;margin:0 auto;display:flex;overflow-x:auto;scrollbar-width:none}
+.rail-in::-webkit-scrollbar{display:none}
+.rail button{flex:1;min-width:112px;background:transparent;border:0;border-bottom:3px solid transparent;
+  padding:9px 10px 8px;text-align:left;cursor:pointer;color:#C6B4D1;font-size:12px;line-height:1.25}
+.rail button b{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.1em;opacity:.75;margin-bottom:2px}
+.rail button.on{color:#fff;border-bottom-color:#fff}
+.rail button.done{color:#E6DCEC}
+.rail button.done b::after{content:" \2713"}
+.rail button:hover{color:#fff}
+
+/* ---------- shell ---------- */
+.shell{max-width:1200px;margin:0 auto;padding:18px 14px 130px}
+@media (min-width:980px){
+  .shell{display:grid;grid-template-columns:minmax(0,1fr) 436px;gap:20px;align-items:start;padding:22px 20px 60px}
+  .answer-wrap{position:sticky;top:18px;max-height:calc(100vh - 36px);overflow-y:auto;scrollbar-width:thin}
+}
+
+/* ---------- body schematic: where to look ---------- */
+.bodymap{border:1.5px solid var(--line2);background:var(--hema-pale);border-radius:9px;padding:12px 12px 13px;margin-bottom:14px}
+.bmhead>b{display:block;font-family:var(--body);font-size:12px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--ink2)}
+.bmhead .bmsub{display:block;font-size:12.5px;color:var(--ink3);line-height:1.45;margin:3px 0 10px;max-width:64ch}
+.bmgrid{display:grid;gap:13px;grid-template-columns:minmax(0,1fr)}
+.bmside,.figs{min-width:0}
+@media (min-width:620px){.bmgrid{grid-template-columns:auto minmax(0,1fr);align-items:start}}
+.figs{display:flex;gap:8px;justify-content:center}
+.bodyfig{height:clamp(180px,29vh,262px);width:auto;flex:none}
+.bz{fill:var(--hema);fill-opacity:var(--i,.06);stroke:var(--paper);stroke-width:.7;stroke-linejoin:round;cursor:pointer;transition:fill-opacity .14s}
+.bz:hover,.bz.sel{fill:var(--eosin);fill-opacity:.9}
+.bfcap{font-family:var(--mono);font-size:7px;fill:var(--ink3);text-anchor:middle;letter-spacing:.14em}
+.bmcap{margin:0 0 10px;font-size:13px;line-height:1.45;color:var(--ink2);min-height:3.2em}
+.bmcap b{color:var(--ink)}
+.bmlist,.bmchips{font-size:12.5px;color:var(--ink3)}
+.bmlist{margin-bottom:11px}
+.bmlist>b,.bmchips>b{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.13em;text-transform:uppercase;margin-bottom:5px;color:var(--ink3);font-weight:500}
+.ztrow{display:flex;flex-wrap:wrap;gap:4px}
+.zt{display:inline-block;background:#fff;border:1px solid var(--line);border-radius:20px;padding:2px 9px;font-size:12.5px;color:var(--ink)}
+.zt i{font-style:normal;color:var(--ink3);font-family:var(--mono);font-size:10px;margin-left:5px}
+.chiprow{display:flex;flex-wrap:wrap;gap:5px}
+.sitechip{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1.5px solid var(--line2);border-radius:20px;padding:4px 10px 4px 7px;font-size:12.5px;color:var(--ink3);cursor:pointer;text-align:left}
+.sitechip.rel{color:var(--ink);border-color:var(--line)}
+.sitechip.on{background:var(--confirm);border-color:var(--confirm);color:#fff}
+.sitechip .dot{width:8px;height:8px;border-radius:50%;background:var(--hema);opacity:calc(.10 + var(--i,0) * .9);flex:none}
+.sitechip.on .dot{background:#fff;opacity:1}
+.sitechip.on .dot::after{content:""}
+.sitechip:hover{border-color:var(--eosin)}
+.bmcount{font-size:11px;color:var(--ink3);margin-top:8px;font-family:var(--mono);letter-spacing:.04em}
+@media (min-width:980px){
+  .step.hasmap{overflow:visible}
+  .bodymap{position:sticky;top:0;z-index:3;box-shadow:0 12px 24px -18px rgba(31,24,35,.75)}
+  .bodyfig{height:clamp(210px,32vh,300px)}
+}
+@media (max-width:619px){
+  .bmcap{min-height:0;margin-bottom:8px}
+  .bodyfig{height:clamp(190px,26vh,238px)}
+  .bmhead .bmsub{margin-bottom:8px}
+  .ztrow,.chiprow{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:5px;scrollbar-width:none;
+    -webkit-overflow-scrolling:touch;padding-bottom:2px;
+    -webkit-mask-image:linear-gradient(90deg,#000 88%,transparent);mask-image:linear-gradient(90deg,#000 88%,transparent)}
+  .ztrow::-webkit-scrollbar,.chiprow::-webkit-scrollbar{display:none}
+  .bmlist{margin-bottom:9px}
+  .zt,.sitechip{flex:none;white-space:nowrap;margin:0}
+}
+
+
+/* ---------- step cards ---------- */
+.step{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);margin-bottom:14px;overflow:hidden}
+.step>h2{display:flex;align-items:center;gap:10px;padding:14px 16px 13px;font-size:13px;
+  letter-spacing:.09em;text-transform:uppercase;font-family:var(--body);font-weight:700;color:var(--ink2);
+  border-bottom:1px solid var(--line2)}
+.step>h2 .stepq{margin-left:auto;font-family:var(--mono);font-size:11px;letter-spacing:.04em;text-transform:none;color:var(--ink3);font-weight:400}
+.step>h2 .n{font-family:var(--mono);font-size:12px;font-weight:500;color:var(--paper);background:var(--hema);
+  width:22px;height:22px;border-radius:50%;display:grid;place-items:center;flex:none}
+.step.gate>h2 .n{background:var(--urgent)}
+.step .in{padding:15px 16px 17px}
+.step .in>p.lead{margin:0 0 12px;font-size:14.5px;color:var(--ink2)}
+.step .in>p.lead b{color:var(--ink)}
+
+/* ---------- inputs ---------- */
+select,input[type=search],input[type=number],input[type=text]{width:100%;padding:11px 12px;background:#fff;
+  border:1.5px solid var(--line);border-radius:7px;font-size:15.5px}
+label.fld{display:block;margin-bottom:12px}
+label.fld>span{display:block;font-size:13px;font-weight:600;color:var(--ink2);margin-bottom:6px}
+label.fld>em{display:block;font-style:normal;font-size:12.5px;color:var(--ink3);margin:-2px 0 6px;line-height:1.4}
+.patient{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:13px}
+.patient label{display:block}
+.patient label>span{display:block;font-size:13px;font-weight:600;color:var(--ink2);margin-bottom:6px}
+.agebox{display:flex;gap:6px}
+.agebox input{flex:1;min-width:0}
+.agebox select{flex:none;width:92px;padding:11px 6px;font-size:14px}
+
+/* ---------- red flag gate ---------- */
+.flags{display:grid;gap:7px}
+.flagrow{display:flex;align-items:flex-start;gap:11px;padding:11px 12px;background:#fff;
+  border:1.5px solid var(--line2);border-radius:8px;cursor:pointer;text-align:left;width:100%}
+.flagrow:hover{border-color:var(--urgent)}
+.flagrow[aria-pressed=true]{border-color:var(--urgent);background:var(--urgent-soft)}
+.flagrow .box{width:18px;height:18px;border-radius:4px;border:2px solid var(--line);flex:none;margin-top:1px;position:relative;background:#fff}
+.flagrow[aria-pressed=true] .box{border-color:var(--urgent);background:var(--urgent)}
+.flagrow[aria-pressed=true] .box::after{content:"";position:absolute;left:4px;top:0;width:5px;height:10px;
+  border:solid #fff;border-width:0 2.5px 2.5px 0;transform:rotate(45deg)}
+.flagrow .ftxt{flex:1;min-width:0;font-size:14.5px;line-height:1.35}
+.flagrow .ftxt em{display:block;font-style:normal;font-size:12.5px;color:var(--urgent);margin-top:4px;line-height:1.4;font-weight:600}
+.flagrow[aria-pressed=false] .ftxt em{display:none}
+.flagnone{margin:11px 0 0;padding:10px 12px;border-radius:7px;background:var(--hema-soft);font-size:13.5px;color:var(--ink2);line-height:1.45}
+.flagnone b{color:var(--ink)}
+
+/* ---------- radio list ---------- */
+.who{display:grid;gap:7px}
+.who button{display:flex;align-items:center;gap:11px;width:100%;text-align:left;padding:11px 12px;
+  background:#fff;border:1.5px solid var(--line);border-radius:8px;cursor:pointer;font-size:15px;line-height:1.35}
+.who button:hover{border-color:var(--hema)}
+.who button[aria-pressed=true]{border-color:var(--hema);background:var(--hema-soft);font-weight:600}
+.who .pip{width:16px;height:16px;border-radius:50%;border:2px solid var(--line);flex:none;position:relative}
+.who button[aria-pressed=true] .pip{border-color:var(--hema)}
+.who button[aria-pressed=true] .pip::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--hema)}
+.who .rate{margin-left:auto;font-family:var(--mono);font-size:12.5px;color:var(--ink3);flex:none;padding-left:8px}
+
+/* ---------- multi-select chips (context) ---------- */
+.chips{display:flex;flex-wrap:wrap;gap:7px}
+.chip{padding:8px 12px;background:#fff;border:1.5px solid var(--line);border-radius:20px;
+  cursor:pointer;font-size:13.5px;line-height:1.25;text-align:left}
+.chip:hover{border-color:var(--hema)}
+.chip[aria-pressed=true]{border-color:var(--hema);background:var(--hema-soft);color:var(--hema);font-weight:600}
+
+/* ---------- findings ---------- */
+.finds{display:grid;gap:6px}
+.f-row{display:flex;align-items:center;gap:10px;padding:9px 10px;background:#fff;
+  border:1.5px solid var(--line2);border-radius:8px}
+.f-row.set{border-color:var(--line);background:#FEFDFE}
+.f-row.ask{border-color:var(--eosin);background:var(--eosin-soft)}
+.f-row .nm{flex:1;font-size:14.5px;line-height:1.3;min-width:0}
+.f-row .nm small{display:block;font-size:11.5px;color:var(--ink3);margin-top:2px;font-family:var(--mono)}
+.f-row .nm .askmark{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.09em;
+  text-transform:uppercase;color:#fff;background:var(--eosin-ink);padding:2px 6px;border-radius:4px;margin-right:6px;vertical-align:1px}
+.yn{display:flex;flex:none;border:1.5px solid var(--line);border-radius:7px;overflow:hidden}
+.yn button{padding:7px 0;width:42px;background:#fff;border:0;border-right:1px solid var(--line);
+  font-size:13px;font-weight:600;cursor:pointer;color:var(--ink3);line-height:1.2}
+.yn button:last-child{border-right:0}
+.yn button[aria-pressed=true]{color:#fff}
+.yn button[data-v=y][aria-pressed=true]{background:var(--hema)}
+.yn button[data-v=n][aria-pressed=true]{background:var(--confirm)}
+.yn button[data-v=""][aria-pressed=true]{background:var(--ink3)}
+.sub-h{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin:18px 0 8px}
+.sub-h:first-child{margin-top:0}
+
+/* ============================================================
+   SIGNATURE: the ranked differential.
+   Everything else on the page is quiet so that this can move.
+   ============================================================ */
+.ranked{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.ranked>h3{padding:14px 16px 12px;font-size:12px;letter-spacing:.09em;text-transform:uppercase;
+  font-family:var(--body);font-weight:700;color:var(--ink2);border-bottom:1px solid var(--line2);margin:0;
+  display:flex;align-items:center;gap:9px}
+.ranked>h3 .cnt{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink3);text-transform:none;letter-spacing:.03em;font-weight:400}
+.rank-list{margin:0;padding:6px 0 8px;list-style:none}
+.rk{padding:9px 16px 10px;position:relative}
+@media (prefers-reduced-motion:no-preference){.rk{transition:background .25s ease}}
+.rk+.rk{border-top:1px solid #F0EBF2}
+.rk.top{background:var(--hema-pale)}
+.rk-head{display:flex;align-items:baseline;gap:10px}
+.rk-pos{font-family:var(--mono);font-size:11px;color:var(--ink3);width:16px;flex:none}
+.rk-nm{flex:1;min-width:0;font-size:15px;font-weight:600;line-height:1.3}
+.rk.top .rk-nm{font-size:16.5px;font-weight:700;letter-spacing:-.01em}
+.rk-pc{font-family:var(--disp);font-size:16px;font-weight:800;letter-spacing:-.02em;flex:none;color:var(--tail-ink)}
+.rk.top .rk-pc{font-size:23px;color:var(--lead)}
+.rk.mid .rk-pc{color:var(--plaus)}
+.rk-bar{height:5px;border-radius:3px;background:#E7E0EB;margin:6px 0 0 26px;overflow:hidden}
+.rk-bar i{display:block;height:100%;border-radius:3px;background:var(--tail)}
+@media (prefers-reduced-motion:no-preference){.rk-bar i{transition:width .32s cubic-bezier(.4,0,.2,1),background .3s}}
+.rk.top .rk-bar i{background:var(--lead)}
+.rk.mid .rk-bar i{background:var(--plaus)}
+.rk-why{margin:7px 0 0 26px;font-size:13px;color:var(--ink2);line-height:1.45}
+.rk-why b{color:var(--ink);font-weight:600}
+.rk-moved{font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;padding:1px 5px;border-radius:4px;margin-left:7px;vertical-align:1px}
+.rk-moved.up{background:var(--eosin-soft);color:var(--eosin)}
+.rk-moved.down{background:#EEF3F1;color:var(--confirm)}
+.rk-tail{padding:10px 16px 12px;font-size:12.5px;color:var(--ink3);line-height:1.5;border-top:1px solid var(--line2)}
+
+/* ---------- next question ---------- */
+.nextq{border-top:1px solid var(--line2);padding:13px 16px 14px;background:var(--eosin-soft)}
+.nextq b{display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--eosin-ink);margin-bottom:5px}
+.nextq p{margin:0;font-size:14.5px;line-height:1.45;color:var(--ink)}
+.nextq p strong{font-weight:700}
+.nextq em{display:block;font-style:normal;font-size:12.5px;color:var(--ink2);margin-top:5px;line-height:1.45}
+
+/* ---------- separator / discriminators ---------- */
+.disc{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);margin-top:12px;overflow:hidden}
+.disc>h3{padding:14px 16px 12px;font-size:12px;letter-spacing:.09em;text-transform:uppercase;
+  font-family:var(--body);font-weight:700;color:var(--ink2);border-bottom:1px solid var(--line2);margin:0}
+.dcard{padding:13px 16px 14px}
+.dcard+.dcard{border-top:1px solid var(--line2)}
+.dcard h4{margin:0 0 3px;font-family:var(--body);font-size:15px;font-weight:700;letter-spacing:0;line-height:1.3}
+.dcard .pc{font-family:var(--mono);font-size:11.5px;color:var(--ink3);margin-bottom:9px;display:block}
+.dcard .look{margin:0 0 10px;font-size:13.5px;line-height:1.5;color:var(--ink2)}
+.dline{display:flex;gap:9px;margin-bottom:7px;align-items:flex-start}
+.dline:last-child{margin-bottom:0}
+.dline .tag{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
+  padding:3px 6px;border-radius:4px;flex:none;margin-top:1px;font-weight:500}
+.dline.for .tag{background:var(--hema-soft);color:var(--hema)}
+.dline.agn .tag{background:#EEF3F1;color:var(--confirm)}
+.dline.cfm .tag{background:var(--eosin-soft);color:var(--eosin-ink)}
+.dline span{flex:1;min-width:0;font-size:13.5px;line-height:1.5;color:var(--ink2)}
+.dline span b{color:var(--ink);font-weight:600}
+
+/* ---------- tests ---------- */
+.tests{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);margin-top:12px;overflow:hidden}
+.tests>h3{padding:14px 16px 12px;font-size:12px;letter-spacing:.09em;text-transform:uppercase;
+  font-family:var(--body);font-weight:700;color:var(--ink2);border-bottom:1px solid var(--line2);margin:0}
+.tcard{padding:13px 16px 15px}
+.tcard+.tcard{border-top:1px solid var(--line2)}
+.tcard .th{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin-bottom:3px}
+.tcard .th strong{font-size:15px;font-weight:700;line-height:1.3}
+.tcard .th .op{font-family:var(--mono);font-size:11px;color:var(--ink3);margin-left:auto}
+.tcard .tgt{display:block;font-size:12.5px;color:var(--ink3);margin-bottom:9px}
+.tcard .tgt b{color:var(--ink2);font-weight:600}
+.postpair{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line2);border-radius:7px;overflow:hidden;margin:9px 0 10px}
+.postpair div{background:#fff;padding:9px 11px}
+.postpair b{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;margin-bottom:3px}
+.postpair .pp-p b{color:var(--eosin-ink)} .postpair .pp-n b{color:var(--confirm)}
+.postpair span{font-family:var(--disp);font-size:19px;font-weight:800;letter-spacing:-.02em;display:block;line-height:1.05}
+.postpair em{font-style:normal;font-size:12px;color:var(--ink2);display:block;margin-top:3px;line-height:1.4}
+.tnote{display:grid;gap:6px}
+.tnote div{padding:9px 11px;border-radius:7px;background:#fff;border:1.5px solid var(--line2);font-size:13px;line-height:1.45;color:var(--ink2)}
+.tnote div b{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;margin-bottom:3px}
+.tnote .tw b{color:var(--ink3)} .tnote .tp b{color:var(--eosin-ink)} .tnote .tn b{color:var(--confirm)} .tnote .tx b{color:var(--exclude-ink)}
+
+/* ---------- verdict band ---------- */
+.verdict{padding:18px 18px 17px;color:#fff}
+.verdict .kicker{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;opacity:.82}
+.verdict h2{font-size:25px;font-weight:800;margin:7px 0 8px;color:#fff;line-height:1.08}
+.verdict p{margin:0;font-size:14.5px;line-height:1.45;opacity:.96}
+.verdict .because{margin:11px 0 0;padding:9px 11px;background:rgba(255,255,255,.16);border-radius:6px;
+  font-family:var(--mono);font-size:12.5px;line-height:1.5}
+.v-lead{background:var(--hema)} .v-open{background:#BC8020;color:var(--ink)}
+.v-open .kicker{color:var(--ink);opacity:1}
+.v-open h2{color:var(--ink)}
+.v-open p{color:var(--ink);opacity:1}
+.v-open .because{color:var(--ink);background:rgba(255,255,255,.34);border-color:rgba(31,24,35,.18)} .v-urgent{background:var(--urgent)}
+.answer{border-radius:var(--r);overflow:hidden;border:1px solid var(--line);background:var(--paper)}
+
+/* ---------- action plan ---------- */
+.plan{border-top:1px solid var(--line2)}
+.plan>h3{padding:13px 16px 11px;font-size:12px;letter-spacing:.09em;text-transform:uppercase;
+  font-family:var(--body);font-weight:700;color:var(--ink2);border-bottom:1px solid var(--line2);margin:0}
+.plan ol{list-style:none;margin:0;padding:6px 0 4px;counter-reset:pl}
+.plan ol li{display:flex;gap:11px;padding:10px 16px;align-items:flex-start;counter-increment:pl}
+.plan ol li::before{content:counter(pl);font-family:var(--mono);font-size:11px;font-weight:500;color:var(--paper);
+  background:var(--hema);width:19px;height:19px;border-radius:50%;display:grid;place-items:center;flex:none;margin-top:2px}
+.plan ol li.urgent::before{background:var(--urgent)}
+.plan .pl-b{flex:1;min-width:0}
+.plan .pl-b strong{display:block;font-size:14.5px;font-weight:600;color:var(--ink);line-height:1.35;margin-bottom:3px}
+.plan .pl-b span{display:block;font-size:13.5px;color:var(--ink2);line-height:1.5}
+
+/* ---------- disclosure & misc ---------- */
+details.more{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);margin-top:12px}
+details.more>summary{cursor:pointer;padding:14px 16px;font-size:14.5px;font-weight:600;color:var(--ink2);
+  list-style:none;display:flex;align-items:center;gap:9px}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::before{content:"+";font-family:var(--mono);font-size:16px;color:var(--ink3);width:14px}
+details.more[open]>summary::before{content:"\2212"}
+details.more .body{padding:0 16px 16px;font-size:13.5px;line-height:1.55;color:var(--ink2)}
+details.more .body p{margin:0 0 9px}
+details.more .body p:last-child{margin-bottom:0}
+details.more .body ul{margin:0 0 9px;padding-left:18px}
+details.more .body li{margin-bottom:4px}
+.src{font-family:var(--mono);font-size:11.5px;color:var(--ink3);line-height:1.5}
+.grade{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;padding:2px 5px;border-radius:4px;font-weight:500;vertical-align:1px}
+.gA{background:#E4EFEC;color:#215B52} .gB{background:var(--hema-soft);color:var(--hema)} .gC{background:#F5EDE0;color:#8A5E12}
+.stale{background:var(--urgent-soft);color:var(--urgent);border:1px solid #E8C2CC;padding:9px 11px;border-radius:7px;font-size:13px;line-height:1.45;margin:10px 0 0}
+.warn{background:#FBF4E6;border:1px solid #EBDCBE;color:#7A5410;padding:10px 12px;border-radius:7px;font-size:13px;line-height:1.5;margin:11px 0 0}
+.warn b{color:#5E400C}
+.foot{max-width:1200px;margin:0 auto;padding:22px 20px 40px;font-size:12.5px;color:var(--ink3);line-height:1.6}
+.foot b{color:var(--ink2)}
+.actbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.actbar button{padding:10px 14px;border-radius:7px;border:1.5px solid var(--line);background:#fff;
+  font-size:13.5px;font-weight:600;cursor:pointer;color:var(--ink2)}
+.actbar button:hover{border-color:var(--hema);color:var(--hema)}
+.emptystate{padding:28px 18px;text-align:center;color:var(--ink3);font-size:14px;line-height:1.55}
+.emptystate b{display:block;color:var(--ink2);font-size:15px;margin-bottom:5px;font-weight:600}
+
+/* ---------- knowledge layers (Andrews) ---------- */
+.klayers{margin-top:12px;border-top:1px dashed var(--line);padding-top:11px}
+.klh{font-family:var(--mono);font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink3);
+  margin-bottom:9px;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.klh .src2{margin-left:auto;text-transform:none;letter-spacing:.01em;font-style:italic;color:var(--ink3);font-family:var(--body);font-size:11px}
+.klayer{display:grid;grid-template-columns:120px 1fr;gap:11px;margin-bottom:8px;font-size:12.5px;line-height:1.5}
+.klayer:last-child{margin-bottom:0}
+.kllab{font-family:var(--mono);font-size:10px;letter-spacing:.03em;text-transform:uppercase;color:var(--hema);
+  padding-top:2px;font-weight:500}
+.kl-mg .kllab{color:var(--exclude-ink)}
+.kl-as .kllab{color:var(--confirm)}
+.kltxt{color:var(--ink2)}
+.kltxt b{color:var(--ink);font-weight:600}
+.klfoot{margin:2px 16px 14px;padding:9px 12px;background:#FBF6EC;border:1px solid #EBDCBE;border-radius:7px;
+  font-size:11.5px;color:#7A5410;line-height:1.5}
+.klpending{margin-top:12px;border-top:1px dashed var(--line);padding-top:10px;font-size:11.5px;
+  color:var(--ink3);font-style:italic;line-height:1.45}
+@media (max-width:520px){.klayer{grid-template-columns:1fr;gap:2px}.kllab{padding-top:0}}
+
+/* ---------- accessibility and delivery ---------- */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.skip{position:absolute;left:8px;top:-60px;z-index:60;background:var(--paper);color:var(--ink);
+  border:2px solid var(--eosin);border-radius:8px;padding:9px 14px;font-weight:700;font-size:14px;text-decoration:none;transition:top .12s}
+.skip:focus{top:8px}
+.rail button:focus-visible,.flagrow:focus-visible,.chip:focus-visible,.who button:focus-visible,
+.actbar button:focus-visible,.sitechip:focus-visible{border-color:var(--eosin)}
+.bz:focus-visible{fill:var(--eosin);fill-opacity:.9}
+
+/* ---------- mobile: one step at a time, and the answer always one tap away ---------- */
+#mbar{display:none}
+@media (max-width:979px){
+  /* every input big enough that iOS does not zoom the page on focus */
+  select,input[type=search],input[type=number],input[type=text]{font-size:16px}
+  .agebox select{font-size:16px;padding:11px 4px}
+  /* comfortable thumb targets */
+  .f-row .yn button{min-height:42px;min-width:48px}
+  .sitechip{min-height:40px;padding:7px 13px 7px 10px}
+  .bmtoggle{min-height:40px;padding:6px 16px}
+  .chip{min-height:40px}
+  /* the six panels are ~25,000px of scroll if they all stay open. Only the
+     current one is expanded; the rest collapse to a tappable header, and the
+     progress rail above is already the navigator for them. */
+  .step:not(.cur)>.in{display:none}
+  .step:not(.cur)>h2{cursor:pointer}
+  .step>h2{cursor:pointer}
+  .step>h2::after{content:"";width:8px;height:8px;border:solid var(--ink3);border-width:0 2px 2px 0;
+    transform:rotate(45deg);margin-left:2px;flex:none;transition:transform .15s}
+  .step.cur>h2::after{transform:rotate(-135deg)}
+  .step>h2 .stepq{display:none}
+  .step:not(.cur){margin-bottom:8px}
+  /* sticky answer bar: the differential is otherwise 21 screens down */
+  #mbar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:40;align-items:center;gap:10px;
+    padding:9px 14px calc(9px + env(safe-area-inset-bottom,0px));background:var(--hema);color:#EFE7F4;
+    border:0;width:100%;text-align:left;box-shadow:0 -6px 20px -12px rgba(31,24,35,.8);cursor:pointer}
+  #mbar.acute{background:var(--urgent)}
+  #mbar .mb-k{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:#C6B4D1;display:block}
+  #mbar.acute .mb-k{color:#F6D7DE}
+  #mbar .mb-n{display:block;font-family:var(--disp);font-weight:700;font-size:15px;line-height:1.15;color:#fff;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #mbar .mb-l{flex:1;min-width:0}
+  #mbar .mb-p{font-family:var(--disp);font-weight:800;font-size:19px;color:#fff;flex:none}
+  #mbar .mb-go{font-size:11px;color:#C6B4D1;flex:none;font-family:var(--mono);letter-spacing:.08em}
+  .shell{padding-bottom:96px}
+  footer.foot{padding-bottom:80px}
+}
+
+/* ---------- print: the shortlist, not the instrument ----------
+   An A4 page is under 979 CSS px, so the phone rules fire during printing and
+   collapse every panel. Printing therefore has to re-open what the accordion
+   closed, drop the controls, and put the differential first - a printout is
+   read, not operated. */
+@media print{
+  body{background:#fff}
+  .rail,.skip,#mbar,.nextq,.bodymap,.actbar,.f-row .yn,.f-row .ans,.flags,.chips,
+  .step .in>p.lead,.who,.patient,label.fld{display:none !important}
+  .step>h2::after{display:none !important}
+  #steps>.step{display:none !important}
+  #steps>.step.s6{display:block !important;border:0;margin:0}
+  #steps>.step.s6>.in{display:block !important;padding:0}
+  header.top{background:#fff;color:#000;border-bottom:2px solid #000;padding:0 0 8px}
+  .top h1{color:#000;font-size:17px}.top .ed{color:#444}.top .say{color:#222;max-width:none}
+  .shell{display:flex;flex-direction:column;max-width:none;padding:10px 0}
+  .answer-wrap{order:-1;position:static;max-height:none;overflow:visible}
+  /* avoid breaks only on units small enough to fit a page; the answer panel
+     itself is taller than A4, and avoiding a break inside it pushes the whole
+     printout onto page 2 and then clips it */
+  .rk-item,.dline,.tcard,.kl,.tnote,.postpair{break-inside:avoid;page-break-inside:avoid}
+  .step,.answer{border-color:#999;overflow:visible !important}
+  .verdict{background:#fff !important;border:2px solid #000}
+  .verdict .kicker,.verdict h2,.verdict p,.verdict .because{color:#000 !important;opacity:1}
+  .verdict .because{background:#f2f2f2 !important;border-color:#999}
+  .rk-bar{display:none}
+  .foot{color:#333;border-top:1px solid #999;padding-top:8px}
+  a[href]:after{content:""}
+}
+
+/* ---------- the examination head: what to look for, and where ---------- */
+.examhead{margin-bottom:14px}
+.examhead .nextq{margin-bottom:10px}
+.bmtoggle{margin-left:auto;flex:none;background:#fff;border:1.5px solid var(--line2);border-radius:20px;
+  padding:4px 12px;font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink2);cursor:pointer;line-height:1.5}
+.bmtoggle:hover,.bmtoggle:focus-visible{border-color:var(--eosin);color:var(--ink)}
+.bmhead{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.bmhead>b{flex:none}
+.bmhead .bmsub{flex-basis:100%}
+/* collapsed strip */
+.bodymap.mini{padding:8px 12px}
+.bmstrip{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.bmstrip>b{font-family:var(--body);font-size:12px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--ink2);flex:none}
+.bmzones{font-size:12.5px;color:var(--ink2);flex:1 1 240px;min-width:0;line-height:1.45}
+.bmdone{font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;color:var(--ink3);flex:none}
+
+@media (min-width:980px){
+  /* pin the pair, not just the picture - the prompt is the part you act on */
+  .examhead{position:sticky;top:0;z-index:3;background:var(--paper);
+    padding:2px 0 8px;box-shadow:0 14px 16px -16px rgba(31,24,35,.55)}
+  .bodymap{position:static;box-shadow:none;padding:10px 12px 11px;margin-bottom:0}
+  /* expanded, the map used two thirds of a 1280x800 viewport. Smaller figures
+     widen the panel beside them, which is what actually shortens it: the same
+     chips wrap into four rows instead of six. */
+  .bodyfig{height:clamp(168px,22vh,208px)}
+  .bmhead>b{font-size:11.5px}
+  .bmhead .bmsub{margin:0 0 7px;font-size:12px;line-height:1.4;max-width:none}
+  .bmcap{min-height:0;margin-bottom:7px;font-size:12.5px}
+  .bmlist{margin-bottom:8px}
+  .bmlist>b,.bmchips>b{margin-bottom:4px}
+  .zt,.sitechip{font-size:12px}
+  .sitechip{padding:3px 9px 3px 7px}
+  .zt{padding:2px 8px}
+  .bmcount{margin-top:6px}
+  .figs{gap:6px}
+}
+
+  /* ---- MedConsults integration ---- */
+  .home-link{display:inline-flex;align-items:center;gap:7px;margin:0 0 12px;
+    font-size:13px;font-weight:600;color:#1E5A52;text-decoration:none;white-space:nowrap;
+    padding:6px 12px 6px 8px;border:1.5px solid rgba(30,90,82,.25);border-radius:20px;background:#fff}
+  .home-link:hover,.home-link:focus-visible{border-color:#1E5A52}
+  .home-link .hh{font-weight:500;opacity:.7;font-size:12px}
+  .offline-note{margin:0 0 14px;padding:11px 14px;border-left:3px solid #A76C11;
+    background:#FBF3E4;color:#5A3E12;border-radius:0 8px 8px 0;font-size:14px}
+  .offline-note button{margin-left:10px;padding:3px 12px;border:1.5px solid #A76C11;border-radius:8px;
+    background:#fff;color:#5A3E12;font-size:14px;cursor:pointer}
+  .foot .legal a{color:var(--ink2)}
+  @media (max-width:720px){
+    .home-link{min-height:44px}
+    button,summary,a.home-link,a.skip{min-height:44px}
+    a.skip{display:flex;align-items:center;justify-content:center}
+    input:not([type=checkbox]):not([type=radio]),select,textarea{font-size:16px;min-height:44px}
+    input[type=checkbox],input[type=radio]{width:24px;height:24px}
+    /* The page sets its own floors on these, at a specificity the generic
+       button rule above cannot reach: .f-row .yn button is 42px and the body
+       site chips, map toggle and context chips are 40px. They only appear
+       once a presentation is being worked through, which is why an idle-page
+       check does not see them. Same specificity, later in the cascade, so
+       these win. */
+    .f-row .yn button{min-height:44px}
+    .bmtoggle{min-height:44px}
+    .sitechip{min-height:44px}
+    .chip{min-height:44px}
+    .field,.row,.cell{min-width:0}
+    input,select,textarea{max-width:100%;min-width:0}
+  }
+</style>
+</head>
+<body>
+<a class="home-link" href="/" aria-label="Go to the MedConsults home page"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><rect width="24" height="24" rx="6" fill="#1E5A52"/><path d="M6.4 12.4l3.3 3.5 7.2-7.8" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span>MedConsults</span><span class="hh">home</span></a><a class="home-link" href="/#tools" style="margin-left:8px"><span>Other tools</span></a>
+
+<a class="skip" href="#steps">Skip to the tool</a>
+<div id="sr" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+<header class="top">
+  <div class="top-in">
+    <h1>Dermatology differential engine</h1>
+    <span class="ed">Shortlist &middot; Discriminate &middot; Confirm</span>
+    <p class="say">Enter what you can see. The tool ranks a fixed candidate set for that morphology, tells you which single observation would separate the leaders, and gives the test that would settle it. It ranks. It does not diagnose.</p>
+  </div>
+</header>
+<nav class="rail"><div class="rail-in" id="rail"></div></nav>
+<main class="shell">
+  <div id="steps"></div>
+  <div class="answer-wrap"><div id="answer"></div></div>
+</main>
+<button type="button" id="mbar" hidden></button>
+<footer class="foot">
+  <p><b>What this is.</b> A structured reasoning aid for clinicians. Base rates are conditional on the presenting morphology, not on the population; percentages are proportions of the listed candidate set and will not match published prevalence. Likelihood ratios graded C are calibrated estimates derived from descriptive text and clinical convention, not measured values &mdash; they are directionally reliable and numerically soft, and should be adjusted to local case mix.</p>
+  <p><b>What it is not.</b> It is not a diagnosis, not a substitute for examination and histopathology, and not complete. A diagnosis absent from a candidate set stays absent however the numbers move. Red flags run before the arithmetic because they outrank it.</p>
+  <p><b>Sources.</b> The ranking engine &mdash; base rates, discriminating findings, likelihood ratios and confirmatory tests &mdash; is derived from <i>Fitzpatrick's Clinical Dermatology</i>, 8th edition, with guideline references cited where they apply. The <b>Deeper reading</b> layers beneath each candidate (dermoscopy or trichoscopy, histopathology, systemic associations and workup, and first-line management) are drawn from <i>Andrews' Diseases of the Skin: Clinical Dermatology</i> and reflect standard US terminology and practice. Content last checked against source: <span id="revdate"></span>. Review cycle: 12 months.</p>
+  <p><b>On management.</b> First-line management lines are an orientation to initial therapy, not a prescription. Doses, contraindications, monitoring and pregnancy considerations are deliberately omitted; drug choice and dosing must be confirmed against current local guidance and the individual patient before any treatment is given.</p>
+  <p><b>Not a medical device.</b> The Dermatology Differential Engine gives structured decision support for education and clinical reasoning. It is not a medical device, has not been validated or cleared by any regulatory authority, and must not be used as the sole basis for diagnosis or treatment.</p>
+  <p class="legal"><a href="/#terms">Terms of service</a> &middot; <a href="/#privacy">Privacy policy</a> &middot; <a href="/#disclaimer">Disclaimer</a></p>
+</footer>
+<script>
+/* =============================================================
+   KNOWLEDGE API
+   The knowledge base and the scoring algorithm live on the server
+   (see medconsults-backend .../knowledge.py and server_js/derm_engine.js).
+   This page holds no differential data of its own: it takes the presentation
+   index on load, one presentation when the user picks it, and posts state to
+   be scored. Nothing entered here is stored or logged anywhere.
+   ============================================================= */
+const API_BASE = (location.hostname === "localhost" || location.hostname === "127.0.0.1")
+  ? "http://127.0.0.1:8123" : "https://api.medconsults.ai";
+
+let DERM = { v:null, reviewed:null, reviewCycle:12, grades:{}, corrNote:"", pres:[] };
+let INDEX = [];        /* {id,grp,label,q} for the picker */
+let R = null;          /* last /derm/assess response */
+let _assessT = null, _assessAbort = null, _offline = false;
+let _busy = false;     /* the last failure was a 429: the service, not the connection */
+
+async function apiGet(path){
+  const r = await fetch(API_BASE + "/api/knowledge/derm" + path, {cache:"no-store"});
+  if(!r.ok){ const e = new Error("HTTP " + r.status); e.status = r.status; throw e; }
+  return r.json();
+}
+
+async function loadIndex(){
+  const boot = await apiGet("/bootstrap");
+  INDEX = boot.pres || [];
+  DERM.v = boot.v; DERM.reviewed = boot.reviewed; DERM.reviewCycle = boot.reviewCycle;
+  DERM.grades = boot.grades || {}; DERM.corrNote = boot.corrNote || "";
+  /* the footer's currency line reads DERM.reviewed, which is only known now */
+  const rd = document.getElementById('revdate');
+  if(rd) rd.textContent = monthWords(DERM.reviewed);
+}
+
+async function loadPresentation(id){
+  const p = await apiGet("/presentation/" + encodeURIComponent(id));
+  DERM.pres = [p];               /* P() reads DERM.pres, so one is enough */
+  return p;
+}
+
+/* One banner, owned by paint(), reflecting whether the last scoring run
+   actually reached the engine. Anything entered since is held on this device
+   and has not been scored. */
+function renderOfflineNote(){
+  const host = document.querySelector('.wrap') || document.body;
+  let b = document.getElementById('assessOffline');
+  if(!_offline){ if(b) b.remove(); return; }
+  if(!b){
+    b = document.createElement('div');
+    b.id = 'assessOffline';
+    b.className = 'offline-note';
+    b.setAttribute('role', 'status');
+    host.insertBefore(b, host.firstChild);
+  }
+  /* a 429 is the service being busy, not the connection being down: sending
+     the clinician to check the network would be the wrong instruction */
+  b.textContent = _busy
+    ? (R ? 'The service is busy — too many requests from this connection in the last minute. The ranking below is the last one the engine returned; anything entered since is saved here and will be scored when you continue after a few seconds.'
+         : 'The service is busy — too many requests from this connection in the last minute. Nothing has been scored yet; your entries are kept on this device and will be scored when you continue after a few seconds.')
+    : (R ? 'Not connected — the ranking below is the last one the engine returned. Anything entered since is saved here but has not been scored yet.'
+         : 'Not connected — the differential engine could not be reached, so nothing has been scored yet. Your entries are kept on this device.');
+}
+
+function assessSoon(){
+  if(_assessT) clearTimeout(_assessT);
+  _assessT = setTimeout(assessNow, 250);
+}
+
+async function assessNow(){
+  if(!DERM.pres.length) return;
+  if(_assessAbort) _assessAbort.abort();
+  const ac = new AbortController(); _assessAbort = ac;
+  const body = { ctx: { presId: S.pres, today: todayISO(), state: {
+    age:S.age, unit:S.unit, sex:S.sex, photo:S.photo, flags:S.flags, noflag:S.noflag,
+    ctx:S.ctx, find:S.find, seen:S.seen, step:S.step, prevRank:S.prevRank, ack:S.ack } } };
+  try{
+    const r = await fetch(API_BASE + "/api/knowledge/derm/assess", {
+      method:"POST", cache:"no-store", signal:ac.signal,
+      headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    if(!r.ok){ const err = new Error("HTTP " + r.status); err.status = r.status; throw err; }
+    R = await r.json(); _offline = false; _busy = false;
+  }catch(e){
+    if(e && e.name === "AbortError") return;   /* superseded, not a failure */
+    _offline = true; _busy = !!(e && e.status === 429);
+  }
+  paint();
+}
+
+function todayISO(){
+  const d = new Date();
+  const p = n => (n<10?"0":"")+n;
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());
+}
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+const odds = p => p/(1-p);
+const prob = o => o/(1+o);
+const pctS = x => (x*100 < 0.5 && x > 0) ? '<1%' : Math.round(x*100) + '%';
+
+const S = {
+  pres: '',
+  age:'', unit:'y', sex:'', photo:'',
+  flags:{}, noflag:false,
+  ctx:{}, find:{}, seen:{}, mapOpen:null,
+  step:1, prevRank:null, ack:{}
+};
+
+const P = () => DERM.pres.find(x => x.id === S.pres) || DERM.pres[0];
+
+function ageY(){
+  const v = parseFloat(S.age);
+  if(!isFinite(v) || v < 0) return null;
+  return S.unit === 'y' ? v : (S.unit === 'm' ? v/12 : v/365);
+}
+
+/* ---- which context rows apply to this patient ---- */
+function ctxRows(){
+  const a = ageY();
+  return (P().ctx||[]).filter(c => {
+    if(c.age && a !== null && (a < c.age[0] || a > c.age[1])) return false;
+    if(c.sex && S.sex && c.sex !== S.sex) return false;
+    return true;
+  });
+}
+function ctxOn(){ return ctxRows().filter((c,i) => S.ctx[ctxKey(c)]); }
+function ctxKey(c){ return c.l; }
+
+/* ---- which candidate diagnoses are plausible for this patient ---- */
+function dxList(){
+  const a = ageY();
+  return (P().dx||[]).filter(d => {
+    if(d.age && a !== null && (a < d.age[0] || a > d.age[1])) return false;
+    if(d.sex && S.sex && d.sex !== S.sex) return false;
+    return true;
+  });
+}
+
+function flagsOn(){ return (P().stop||[]).filter((f,i) => S.flags[P().id+'|'+i]); }
+
+/* ---- findings answered ---- */
+function findAnswered(){
+  const out = [];
+  (P().find||[]).forEach((f,i) => {
+    const v = S.find[P().id+'|'+i];
+    if(v === 'y' || v === 'n') out.push({f:f, i:i, v:v});
+  });
+  return out;
+}
+
+/* ============================================================
+   CORRELATION GUARD
+   Findings carry a group tag. Within one group, the answers
+   describe the same underlying morphologic cluster. Counting
+   each one separately would multiply evidence the observer
+   only saw once, so within a group we keep the single most
+   informative answered finding and set the rest aside.
+   ============================================================ */
+/* applyCorrelationGuard now runs server-side in derm_engine.js */
+
+/* ============================================================
+   THE RANKING
+   ============================================================ */
+function computeRank(){
+  /* The ranking is computed on the server (derm_engine.js). R holds the last
+     /derm/assess response; the rows are re-joined to the diagnosis objects the
+     page already has for the current presentation, so every render function
+     below sees exactly the shape it saw when the algorithm ran in the page. */
+  if(!R || !R.rank) return {rows:[], dropped:[], answered:0, residual:0};
+  const by = {};
+  (P().dx||[]).forEach(d => { by[d.id] = d; });
+  const srows = R.rank.rows||[];
+  const rows = srows
+    .map(r => ({ d: by[r.id], p: r.p, lr: r.lr, pre: r.pre }))
+    .filter(r => r.d);
+  /* The held-back share ("Something not on this list"). The engine
+     renormalises the rows to 1 - residual, so when the response does not
+     carry the value it is recovered exactly from the rows it did send. */
+  const residual = (R.rank.residual != null) ? R.rank.residual
+    : Math.max(0, 1 - srows.reduce((s,r) => s + (r.p||0), 0));
+  return { rows: rows, dropped: R.rank.dropped||[], answered: R.rank.answered||0, residual: residual };
+}
+
+/* ============================================================
+   THE BODY SCHEMATIC
+   A morphology tells you what you are looking at. It does not
+   tell you where the rest of it is. Most of the misses in
+   general dermatology are sites that were never examined -
+   the scalp under the hair, the nail folds, the web spaces,
+   the mouth, the genital skin. So the figure is not decoration:
+   it is shaded by the shortlist currently on screen, and the
+   sites a silhouette cannot show are listed beside it as a
+   checklist, because those are the ones that get skipped.
+   ============================================================ */
+const BODY_SVG = `<svg viewBox="0 0 100 242" class="bodyfig" data-view="a" role="img" aria-label="Front view body schematic" preserveAspectRatio="xMidYMid meet"><g class="bz" data-z="scalp"><path d="M 38 21 A 12 15 0 0 1 62 21 Z"/></g><g class="bz" data-z="face"><path d="M 38 21 A 12 15 0 0 0 62 21 Z"/></g><g class="bz" data-z="ear"><ellipse cx="36.6" cy="22" rx="2.6" ry="4.6"/><ellipse cx="63.4" cy="22" rx="2.6" ry="4.6"/></g><g class="bz" data-z="neck"><path d="M 44 34 L 56 34 L 57 43 L 43 43 Z"/></g><g class="bz" data-z="shoulder"><path d="M 32 43.5 C 26 45 22 49 21.2 55 L 18.4 82 L 28.6 82 L 30.4 55 C 30.8 49 31 45 32 43.5 Z"/><path d="M 68 43.5 C 74 45 78 49 78.8 55 L 81.6 82 L 71.4 82 L 69.6 55 C 69.2 49 69 45 68 43.5 Z"/></g><g class="bz" data-z="chest"><path d="M 42 43 L 58 43 C 64 44 68 47.5 68 53.5 L 68 73 L 32 73 L 32 53.5 C 32 47.5 36 44 42 43 Z"/></g><g class="bz" data-z="axilla"><ellipse cx="31.4" cy="56.5" rx="3.4" ry="5"/><ellipse cx="68.6" cy="56.5" rx="3.4" ry="5"/></g><g class="bz" data-z="abdo"><path d="M 32 73 L 68 73 L 66.2 100 L 33.8 100 Z"/></g><g class="bz" data-z="groin"><path d="M 33.8 100 L 66.2 100 L 63 116 L 37 116 Z"/></g><g class="bz" data-z="antecub"><path d="M 18.4 82 L 28.6 82 L 27.6 92 L 17.4 92 Z"/><path d="M 81.6 82 L 71.4 82 L 72.4 92 L 82.6 92 Z"/></g><g class="bz" data-z="forearm"><path d="M 17.4 92 L 27.6 92 L 25.6 123 L 14.6 123 Z"/><path d="M 82.6 92 L 72.4 92 L 74.4 123 L 85.4 123 Z"/></g><g class="bz" data-z="wrist"><path d="M 14.6 123 L 25.6 123 L 25.3 130 L 14.2 130 Z"/><path d="M 85.4 123 L 74.4 123 L 74.7 130 L 85.8 130 Z"/></g><g class="bz" data-z="palm"><path d="M 14.2 130 L 25.3 130 C 26 138 25.6 146 24 150 L 15 150 C 13.4 146 13.4 138 14.2 130 Z"/><path d="M 85.8 130 L 74.7 130 C 74 138 74.4 146 76 150 L 85 150 C 86.6 146 86.6 138 85.8 130 Z"/></g><g class="bz" data-z="thigh"><path d="M 37 116 L 48.6 116 L 47.8 158 L 38 158 Z"/><path d="M 63 116 L 51.4 116 L 52.2 158 L 62 158 Z"/></g><g class="bz" data-z="knee"><path d="M 38 158 L 47.8 158 L 47.8 170 L 38 170 Z"/><path d="M 62 158 L 52.2 158 L 52.2 170 L 62 170 Z"/></g><g class="bz" data-z="shin"><path d="M 38 170 L 47.8 170 L 47 212 L 39 212 Z"/><path d="M 62 170 L 52.2 170 L 53 212 L 61 212 Z"/></g><g class="bz" data-z="ankle"><path d="M 39 212 L 47 212 L 47 220 L 39 220 Z"/><path d="M 61 212 L 53 212 L 53 220 L 61 220 Z"/></g><g class="bz" data-z="foot"><path d="M 39 220 L 47 220 C 48.4 226 48.6 232 47.6 234 L 37 234 C 36.4 231 37.4 225 39 220 Z"/><path d="M 61 220 L 53 220 C 51.6 226 51.4 232 52.4 234 L 63 234 C 63.6 231 62.6 225 61 220 Z"/></g><text x="50" y="241" class="bfcap">FRONT</text></svg><svg viewBox="0 0 100 242" class="bodyfig" data-view="p" role="img" aria-label="Back view body schematic" preserveAspectRatio="xMidYMid meet"><g class="bz" data-z="scalp"><ellipse cx="50" cy="21" rx="12" ry="15"/></g><g class="bz" data-z="ear"><ellipse cx="36.6" cy="22" rx="2.6" ry="4.6"/><ellipse cx="63.4" cy="22" rx="2.6" ry="4.6"/></g><g class="bz" data-z="neck"><path d="M 44 34 L 56 34 L 57 43 L 43 43 Z"/></g><g class="bz" data-z="shoulder"><path d="M 32 43.5 C 26 45 22 49 21.2 55 L 18.4 82 L 28.6 82 L 30.4 55 C 30.8 49 31 45 32 43.5 Z"/><path d="M 68 43.5 C 74 45 78 49 78.8 55 L 81.6 82 L 71.4 82 L 69.6 55 C 69.2 49 69 45 68 43.5 Z"/></g><g class="bz" data-z="back"><path d="M 42 43 L 58 43 C 64 44 68 47.5 68 53.5 L 68 100 L 32 100 L 32 53.5 C 32 47.5 36 44 42 43 Z"/></g><g class="bz" data-z="buttock"><path d="M 32 100 L 68 100 L 65 118 L 35 118 Z"/></g><g class="bz" data-z="elbow"><path d="M 18.4 82 L 28.6 82 L 27.6 92 L 17.4 92 Z"/><path d="M 81.6 82 L 71.4 82 L 72.4 92 L 82.6 92 Z"/></g><g class="bz" data-z="forearm"><path d="M 17.4 92 L 27.6 92 L 25.6 123 L 14.6 123 Z"/><path d="M 82.6 92 L 72.4 92 L 74.4 123 L 85.4 123 Z"/></g><g class="bz" data-z="hand"><path d="M 14.6 123 L 25.6 123 C 26.4 132 26 146 24 150 L 15 150 C 13 146 12.8 132 14.6 123 Z"/><path d="M 85.4 123 L 74.4 123 C 73.6 132 74 146 76 150 L 85 150 C 87 146 87.2 132 85.4 123 Z"/></g><g class="bz" data-z="thigh"><path d="M 35.6 118 L 48.6 118 L 47.8 158 L 37 158 Z"/><path d="M 64.4 118 L 51.4 118 L 52.2 158 L 63 158 Z"/></g><g class="bz" data-z="poplit"><path d="M 37 158 L 47.8 158 L 47.8 170 L 37.4 170 Z"/><path d="M 63 158 L 52.2 158 L 52.2 170 L 62.6 170 Z"/></g><g class="bz" data-z="calf"><path d="M 37.4 170 L 47.8 170 L 47 212 L 38.4 212 Z"/><path d="M 62.6 170 L 52.2 170 L 53 212 L 61.6 212 Z"/></g><g class="bz" data-z="ankle"><path d="M 38.4 212 L 47 212 L 47 220 L 38.6 220 Z"/><path d="M 61.6 212 L 53 212 L 53 220 L 61.4 220 Z"/></g><g class="bz" data-z="sole"><path d="M 38.6 220 L 47 220 C 48.4 226 48.6 232 47.6 234 L 36.6 234 C 36 231 37 225 38.6 220 Z"/><path d="M 61.4 220 L 53 220 C 51.6 226 51.4 232 52.4 234 L 63.4 234 C 64 231 63 225 61.4 220 Z"/></g><text x="50" y="241" class="bfcap">BACK</text></svg>`;
+
+const ZL = {
+  scalp:'Scalp', face:'Face', ear:'Ears and retroauricular', neck:'Neck',
+  chest:'Chest and presternal', back:'Back and interscapular', abdo:'Abdomen and flanks',
+  axilla:'Axillae', groin:'Groin and inguinal folds', buttock:'Buttocks and sacrum',
+  shoulder:'Shoulders and upper arms', elbow:'Elbows (extensor)', antecub:'Antecubital fossae (flexor)',
+  forearm:'Forearms', wrist:'Wrists (flexor)', hand:'Hands, dorsal', palm:'Palms',
+  thigh:'Thighs', knee:'Knees (extensor)', poplit:'Popliteal fossae (flexor)',
+  shin:'Shins and pretibial', calf:'Calves', ankle:'Ankles', foot:'Feet and toes', sole:'Soles',
+  oral:'Oral mucosa', conj:'Conjunctivae and lids', nail:'Nail folds and plates',
+  web:'Finger and toe webs', umbil:'Umbilicus', genital:'Genital skin', perianal:'Perianal skin'
+};
+const Z_DRAWN = ['scalp','face','ear','neck','chest','back','abdo','axilla','groin','buttock',
+  'shoulder','elbow','antecub','forearm','wrist','hand','palm','thigh','knee','poplit',
+  'shin','calf','ankle','foot','sole'];
+/* the sites a silhouette cannot show, plus the two it shows badly */
+const Z_CHIPS = ['scalp','ear','conj','oral','nail','web','umbil','genital','perianal','palm','sole'];
+
+/* how much of the current shortlist lives in each region.
+   The first two zones of a diagnosis are its home ground and
+   carry full weight; later ones are places it also reaches. */
+function zoneWeights(m){ return (R && R.zones) ? R.zones : {}; }
+function zoneTop(m, z, n){
+  return m.rows.filter(r => (r.d.z||[]).indexOf(z) >= 0).slice(0, n);
+}
+function seenKey(z){ return S.pres + '|' + z; }
+
+function renderBodyMap(m){
+  if(!m.rows.length) return '';
+  const w = zoneWeights(m);
+  const lead = m.rows[0].d;
+  const ordered = Z_DRAWN.concat(Z_CHIPS.filter(z => Z_DRAWN.indexOf(z) < 0))
+    .filter(z => w[z] > 0.14).sort((a,b) => w[b]-w[a]).slice(0,7);
+  const done = Z_CHIPS.filter(z => S.seen[seenKey(z)]).length;
+
+  /* Default: expanded. Except on a short desktop viewport, where an expanded
+     map plus the prompt is most of the screen and the findings themselves get
+     pushed off - there it starts minimized and the strip carries the summary.
+     Once the clinician touches the control their choice is what sticks. */
+  const open = (S.mapOpen === null || S.mapOpen === undefined)
+    ? !(window.innerWidth >= 980 && window.innerHeight < 860)
+    : S.mapOpen !== false;
+
+  /* Collapsed, the map still has to earn its line: the leading regions and how
+     much of the skip-list has been cleared are the two things worth keeping. */
+  if(!open){
+    let h0 = '<div class="bodymap mini" id="bodymap"><div class="bmstrip">'
+      + '<b>Where to look</b>'
+      + '<span class="bmzones">' + (ordered.length
+          ? ordered.slice(0,4).map(z => esc(ZL[z].replace(/ \([^)]*\)/,''))).join(' \u00b7 ')
+          : 'no region separates yet') + '</span>'
+      + '<span class="bmdone">' + done + '/' + Z_CHIPS.length + ' checked</span>'
+      + '<button type="button" class="bmtoggle" id="bmtoggle" aria-expanded="false" aria-controls="bmbody">Expand</button>'
+      + '</div></div>';
+    return h0;
+  }
+
+  let h = '<div class="bodymap" id="bodymap">';
+  h += '<div class="bmhead"><b>Where to look</b>'
+     + '<button type="button" class="bmtoggle" id="bmtoggle" aria-expanded="true" aria-controls="bmbody">Minimize</button>'
+     + '<span class="bmsub">'
+     + 'Shaded by how much of the current shortlist lives in each region. The sites beside it are the ones a silhouette cannot show, and the ones most often skipped.'
+     + '</span></div>';
+  h += '<div id="bmbody">';
+  h += '<div class="bmgrid"><div class="figs">' + BODY_SVG + '</div><div class="bmside">';
+  h += '<p class="bmcap" id="bmcap">'
+     + (lead.pat ? '<b>' + esc(lead.n) + '</b> \u2014 ' + esc(lead.pat) + '. ' : '')
+     + 'Select any region or site for the candidates behind it.</p>';
+  h += '<div class="bmlist"><b>Highest yield now</b><div class="ztrow">'
+     + (ordered.length ? ordered.map(z => '<span class="zt">' + esc(ZL[z]) + '</span>').join('')
+                       : '<span class="zt">no region separates yet</span>')
+     + '</div></div>';
+  h += '<div class="bmchips"><b>Do not skip</b><div class="chiprow">';
+  Z_CHIPS.slice().sort((a,b) => w[b]-w[a]).forEach(z => {
+    const on = !!S.seen[seenKey(z)];
+    h += '<button type="button" class="sitechip' + (w[z] > 0.14 ? ' rel' : '') + (on ? ' on' : '')
+       + '" data-site="' + z + '" aria-pressed="' + on + '">'
+       + '<i class="dot" style="--i:' + w[z].toFixed(3) + '"></i>' + esc(ZL[z]) + '</button>';
+  });
+  h += '</div><div class="bmcount">' + done + ' of ' + Z_CHIPS.length + ' checked</div></div>';
+  h += '</div></div>';
+  h += '</div></div>';
+  return h;
+}
+
+function paintBody(m){
+  const map = $('bodymap'); if(!map) return;
+  const tog0 = $('bmtoggle');
+  if(map.classList.contains('mini')){
+    if(tog0) tog0.onclick = () => { S.mapOpen = true; paint();
+      const t = $('bmtoggle'); if(t) t.focus({preventScroll:true}); };
+    return;
+  }
+  const w = zoneWeights(m);
+  const cap = $('bmcap');
+  const say = z => {
+    const t = zoneTop(m, z, 3);
+    cap.innerHTML = '<b>' + esc(ZL[z] || z) + '</b> \u2014 ' + (t.length
+      ? t.map(r => esc(r.d.n) + ' ' + pctS(r.p)).join(' \u00b7 ')
+      : 'nothing on this shortlist favors this site, but a full examination still includes it.');
+  };
+  map.querySelectorAll('.bz').forEach(g => {
+    const z = g.getAttribute('data-z');
+    const v = w[z] || 0;
+    g.style.setProperty('--i', (0.05 + 0.80*Math.pow(v, 0.75)).toFixed(3));
+    let t = g.querySelector('title');
+    if(!t){ t = document.createElementNS('http://www.w3.org/2000/svg','title'); g.appendChild(t); }
+    t.textContent = ZL[z] || z;
+    g.onmouseenter = () => say(z);
+    g.onclick = () => { map.querySelectorAll('.bz.sel').forEach(x=>x.classList.remove('sel')); g.classList.add('sel'); say(z); };
+  });
+  const tog = $('bmtoggle');
+  if(tog) tog.onclick = () => {
+    S.mapOpen = (tog.getAttribute('aria-expanded') !== 'true');
+    paint();
+    const t = $('bmtoggle'); if(t) t.focus({preventScroll:true});
+  };
+  map.querySelectorAll('.sitechip').forEach(b => {
+    const z = b.getAttribute('data-site');
+    b.onmouseenter = () => say(z);
+    b.onfocus = () => say(z);
+    b.onclick = () => { const k = seenKey(z); S.seen[k] = !S.seen[k]; render(); };
+  });
+}
+
+/* ============================================================
+   THE NEXT MOST USEFUL QUESTION
+   Of the findings not yet answered, which one would most
+   separate the leading candidate from its nearest rival?
+   This is the discriminating-feature advice the clinician
+   actually wants: not a list of everything, but the one
+   observation that would move the case furthest.
+   ============================================================ */
+function nextQuestion(m){
+  /* Chosen on the server; rebuilt here into the shape renderFinds expects:
+     the finding itself, its index, the two leading diagnoses it separates and
+     the four likelihood ratios behind that choice. */
+  if(!R || !R.next) return null;
+  const n = R.next, f = (P().find||[])[n.i];
+  if(!f) return null;
+  const by = {};
+  (P().dx||[]).forEach(d => { by[d.id] = d; });
+  const A = by[n.aId], B = by[n.bId];
+  if(!A || !B) return null;
+  return {f:f, i:n.i, yA:n.yA, yB:n.yB, nA:n.nA, nB:n.nB, A:A, B:B};
+}
+
+/* ---- post-test probability for a test targeting a diagnosis ---- */
+function postTest(pre, se, sp){
+  const Se = clamp(se/100, .01, .999), Sp = clamp(sp/100, .01, .999);
+  const LRp = Se/(1-Sp), LRn = (1-Se)/Sp;
+  return {
+    pos: prob(odds(clamp(pre,.001,.999))*LRp),
+    neg: prob(odds(clamp(pre,.001,.999))*LRn),
+    LRp: LRp, LRn: LRn
+  };
+}
+
+/* ============================================================
+   KNOWLEDGE CURRENCY
+   A decision aid quoting a figure that has since moved does
+   not fail loudly. It gives confident advice the clinician
+   overrides, and repeated overrides destroy trust in the whole
+   instrument. So the age of the content is computed against
+   today and surfaced where it is used.
+   ============================================================ */
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+function asDate(s){ const d = new Date(String(s||'')+'T00:00:00'); return isNaN(d)?null:d; }
+function monthWords(s){ const d = asDate(s); return d ? MONTHS[d.getMonth()]+' '+d.getFullYear() : 'unrecorded'; }
+function monthsSince(s){
+  const d = asDate(s); if(!d) return null;
+  const n = new Date();
+  return (n.getFullYear()-d.getFullYear())*12 + (n.getMonth()-d.getMonth());
+}
+function staleness(){ return (R && R.staleness) ? R.staleness : null; }
+
+/* ============================================================
+   RENDER
+   ============================================================ */
+const STEPS = [
+  {n:'01', t:'Presentation'},
+  {n:'02', t:'Patient'},
+  {n:'03', t:'Safety'},
+  {n:'04', t:'Findings'},
+  {n:'05', t:'Context'},
+  {n:'06', t:'Confirm'}
+];
+function stepDone(i){
+  switch(i){
+    case 0: return !!S.pres;
+    case 1: return S.age !== '' && S.sex !== '';
+    case 2: return S.noflag || flagsOn().length > 0;
+    case 3: return findAnswered().length > 0;
+    case 4: return true;
+    case 5: return true;
+  }
+}
+function drawRail(){
+  $('rail').innerHTML = STEPS.map((s,i) =>
+    '<button type="button" data-go="'+(i+1)+'" class="'+(stepDone(i)?'done ':'')+(S.step===i+1?'on':'')+'">'
+    + '<b>'+s.n+'</b>'+esc(s.t)+'</button>').join('');
+}
+
+function gradeChip(c){
+  return c ? '<span class="grade g'+c+'" title="'+esc(DERM.grades[c]||'')+'">'+c+'</span>' : '';
+}
+
+/* ============================================================
+   KNOWLEDGE LAYERS
+   Four deeper-reading strata drawn from Andrews' Diseases of
+   the Skin, rendered beneath the top candidates. They inform;
+   they do not enter the ranking arithmetic. Fields are optional
+   per diagnosis, so a candidate without them simply omits the
+   strip and its coverage gap is shown rather than hidden.
+   ============================================================ */
+function kLayers(d){
+  const rows = [];
+  const dscLab = (P().id === 'hair') ? 'Trichoscopy' : 'Dermoscopy';
+  if(d.dsc)   rows.push(['dsc', dscLab, d.dsc]);
+  if(d.hp)    rows.push(['hp', 'Histopathology', d.hp]);
+  if(d.assoc) rows.push(['as', 'Associations & workup', d.assoc]);
+  if(d.mgmt)  rows.push(['mg', 'First-line management', d.mgmt]);
+  if(!rows.length) return '';
+  let h = '<div class="klayers"><div class="klh">Deeper reading '+gradeChip('B')
+        + '<span class="src2">Andrews’ Diseases of the Skin</span></div>';
+  rows.forEach(r => {
+    h += '<div class="klayer kl-'+r[0]+'"><span class="kllab">'+esc(r[1])+'</span>'
+       + '<span class="kltxt">'+esc(r[2])+'</span></div>';
+  });
+  h += '</div>';
+  return h;
+}
+
+/* ---------- step 1: presentation ---------- */
+function renderPres(){
+  const groups = {};
+  INDEX.forEach(p => { (groups[p.grp] = groups[p.grp] || []).push(p); });
+  let h = '<p class="lead">Start from what you can see. Each presentation carries its own candidate set, its own discriminating features, and its own confirmatory tests.</p>';
+  h += '<label class="fld"><span>Presenting morphology</span><select id="selPres">';
+  Object.keys(groups).forEach(g => {
+    h += '<optgroup label="'+esc(g)+'">';
+    groups[g].forEach(p => {
+      h += '<option value="'+esc(p.id)+'"'+(p.id===S.pres?' selected':'')+'>'+esc(p.label)+'</option>';
+    });
+    h += '</optgroup>';
+  });
+  h += '</select></label>';
+  h += '<div class="warn" style="background:var(--hema-soft);border-color:var(--line);color:var(--ink2)">'+esc(P().lead)+'</div>';
+  return h;
+}
+
+/* ---------- step 2: patient ---------- */
+function renderPatient(){
+  let h = '<p class="lead">Age and sex adjust the base rates and remove candidates that do not apply. Phototype changes how the same disease looks and which diagnoses are more likely to be missed.</p>';
+  h += '<div class="patient">';
+  h += '<label><span>Age</span><div class="agebox"><input id="pAge" type="text" inputmode="numeric" autocomplete="off" value="'+esc(S.age)+'" placeholder="e.g. 34">'
+     + '<select id="pUnit"><option value="y"'+(S.unit==='y'?' selected':'')+'>years</option>'
+     + '<option value="m"'+(S.unit==='m'?' selected':'')+'>months</option>'
+     + '<option value="d"'+(S.unit==='d'?' selected':'')+'>days</option></select></div></label>';
+  h += '<label><span>Sex</span><select id="pSex"><option value=""'+(S.sex===''?' selected':'')+'>Not specified</option>'
+     + '<option value="f"'+(S.sex==='f'?' selected':'')+'>Female</option>'
+     + '<option value="m"'+(S.sex==='m'?' selected':'')+'>Male</option></select></label>';
+  h += '</div>';
+  h += '<label class="fld"><span>Fitzpatrick skin phototype</span><em>Optional. Recorded because several diagnoses in this tool present differently, or are missed more often, in darker skin.</em><select id="pPhoto">'
+     + ['','I','II','III','IV','V','VI'].map(v => '<option value="'+v+'"'+(S.photo===v?' selected':'')+'>'+(v?('Type '+v):'Not specified')+'</option>').join('')
+     + '</select></label>';
+  if(S.photo === 'IV' || S.photo === 'V' || S.photo === 'VI'){
+    h += '<div class="warn"><b>Phototype '+esc(S.photo)+'.</b> Erythema is harder to read and may appear violaceous or simply darker rather than red; judge by induration, warmth and scale as much as by color. Acral lentiginous melanoma is the commonest melanoma subtype in this group and is regularly missed on palms, soles and nail units. Post-inflammatory pigment change is more prominent and more distressing, and should be discussed as part of the treatment plan rather than as an afterthought.</div>';
+  }
+  return h;
+}
+
+/* ---------- step 3: safety ---------- */
+function renderSafety(){
+  const st = P().stop || [];
+  let h = '<p class="lead">These run before the ranking, because a red flag outranks any probability. Read all of them, then either tick what is present or confirm that none are.</p>';
+  h += '<div class="flags">';
+  st.forEach((f,i) => {
+    const k = P().id+'|'+i, on = !!S.flags[k];
+    h += '<button type="button" class="flagrow" data-flag="'+i+'" aria-pressed="'+on+'">'
+      +  '<span class="box"></span><span class="ftxt">'+esc(f.l)+'<em>'+esc(f.a)+'</em></span></button>';
+  });
+  h += '</div>';
+  h += '<button type="button" class="flagnone" id="noFlag" style="width:100%;text-align:left;cursor:pointer;border:1.5px solid '+(S.noflag?'var(--hema)':'var(--line)')+'">'
+    +  (S.noflag?'<b>\u2713 Confirmed:</b> ':'<b>Tick to confirm:</b> ')+'none of the above is present.</button>';
+  return h;
+}
+
+/* ---------- step 4: context ---------- */
+function renderCtx(){
+  const rows = ctxRows();
+  let h = '<p class="lead">This step comes after the examination deliberately. Fitzpatrick 8e is explicit that the skin should be read before a detailed history is taken, because the account a patient gives is shaped by their own interpretation of the eruption and because diagnostic accuracy is higher when the examination is approached without preconceived ideas. Taken now, the history is more focused. Select everything that is true \u2014 these items reshape the base rates; they do not describe the lesion.</p>';
+  if(!rows.length) return h + '<div class="emptystate">No context modifiers for this presentation.</div>';
+  h += '<div class="chips">';
+  rows.forEach(c => {
+    const on = !!S.ctx[ctxKey(c)];
+    h += '<button type="button" class="chip" data-ctx="'+esc(ctxKey(c))+'" aria-pressed="'+on+'">'+esc(c.l)+'</button>';
+  });
+  h += '</div>';
+  const on = ctxOn();
+  if(on.length){
+    h += '<div class="sub-h" style="margin-top:18px">Where these figures come from</div><div class="src">';
+    on.forEach(c => { h += '<div style="margin-bottom:6px">'+gradeChip(c.c)+' <b>'+esc(c.l)+'</b> \u2014 '+esc(c.s)+'</div>'; });
+    h += '</div>';
+  }
+  return h;
+}
+
+/* ---------- step 5: findings ---------- */
+function renderFinds(m){
+  const nq = nextQuestion(m);
+  let h = '<p class="lead">Describe the lesion before you take the history \u2014 that order is deliberate. Answer what you have actually looked for. A blank is not a "no" \u2014 leaving it blank keeps it out of the arithmetic, which is the honest thing to do when you have not checked.</p>';
+  /* The prompt and the map are one thing - where to look, and what to look for -
+     so they pin together. The prompt goes first because it is the sharper
+     instruction and it costs 94px; the map is collapsible because it costs 450. */
+  h += '<div class="examhead">';
+  if(nq){
+    h += '<div class="nextq" style="border-radius:8px;border:1.5px solid var(--eosin)">'
+      +  '<b>Look for this next</b><p><strong>'+esc(nq.f.l)+'</strong></p>'
+      +  '<em>This separates '+esc(nq.A.n)+' from '+esc(nq.B.n)+' more than any other unanswered finding here.</em></div>';
+  }
+  h += renderBodyMap(m);
+  h += '</div>';
+  h += '<div class="finds">';
+  (P().find||[]).forEach((f,i) => {
+    const k = P().id+'|'+i, v = S.find[k] || '';
+    const isNext = nq && nq.i === i;
+    h += '<div class="f-row '+(v?'set ':'')+(isNext?'ask':'')+'">'
+      +  '<div class="nm">'+(isNext?'<span class="askmark">Ask</span>':'')+esc(f.l)+'<small>'+gradeChip(f.c)+'</small></div>'
+      +  '<div class="yn">'
+      +  '<button type="button" data-f="'+i+'" data-v="y" aria-pressed="'+(v==='y')+'">Yes</button>'
+      +  '<button type="button" data-f="'+i+'" data-v="n" aria-pressed="'+(v==='n')+'">No</button>'
+      +  '<button type="button" data-f="'+i+'" data-v="" aria-pressed="'+(v==='')+'">\u2013</button>'
+      +  '</div></div>';
+  });
+  h += '</div>';
+  if(m.dropped.length){
+    h += '<div class="warn"><b>Correlated findings.</b> '+esc(DERM.corrNote)+'<br><br>Set aside: '
+      +  m.dropped.map(a => esc(a.f.l)).join('; ')+'.</div>';
+  }
+  return h;
+}
+
+/* ---------- step 6: confirm ---------- */
+function renderConfirm(m){
+  if(!m.rows.length) return '<div class="emptystate">No candidates.</div>';
+  const lead = m.rows[0];
+  let h = '<p class="lead">Tests are ranked against the current leading diagnosis, <b>'+esc(lead.d.n)+'</b>. The post-test figures use the probability the ranking has arrived at, so they move as you change the findings above.</p>';
+  const rel = (P().test||[]).slice().sort((a,b) => {
+    const ra = m.rows.findIndex(r => r.d.id === a.tgt), rb = m.rows.findIndex(r => r.d.id === b.tgt);
+    return (ra<0?99:ra) - (rb<0?99:rb);
+  });
+  h += '<div class="finds" style="gap:0">';
+  rel.forEach(t => {
+    const row = m.rows.find(r => r.d.id === t.tgt);
+    const pre = row ? row.p : 0.05;
+    const pt = postTest(pre, t.se, t.sp);
+    h += '<div class="tcard" style="padding:14px 0;border-top:1px solid var(--line2)">'
+      +  '<div class="th"><strong>'+esc(t.l)+'</strong>'+gradeChip(t.c)
+      +  '<span class="op">Se '+t.se+'% \u00b7 Sp '+t.sp+'%</span></div>'
+      +  '<span class="tgt">Answers the question: <b>is this '+esc(row?row.d.n:t.tgt)+'?</b> \u2014 currently at '+pctS(pre)+'</span>'
+      +  '<div class="postpair">'
+      +  '<div class="pp-p"><b>If positive</b><span>'+pctS(pt.pos)+'</span><em>LR+ '+pt.LRp.toFixed(1)+'</em></div>'
+      +  '<div class="pp-n"><b>If negative</b><span>'+pctS(pt.neg)+'</span><em>LR\u2212 '+pt.LRn.toFixed(2)+'</em></div>'
+      +  '</div>'
+      +  '<div class="tnote">'
+      +  '<div class="tw"><b>When to do it</b>'+esc(t.w)+'</div>'
+      +  '<div class="tp"><b>A positive means</b>'+esc(t.p)+'</div>'
+      +  '<div class="tn"><b>A negative means</b>'+esc(t.n)+'</div>'
+      +  '<div class="tx"><b>Where it goes wrong</b>'+esc(t.x)+'</div>'
+      +  '</div>'
+      +  '<div class="src" style="margin-top:8px">'+esc(t.s)+'</div>'
+      +  '</div>';
+  });
+  h += '</div>';
+  return h;
+}
+
+/* ---------- the answer panel ---------- */
+function renderAnswer(m){
+  const on = flagsOn();
+  let h = '<div class="answer">';
+
+  /* verdict band */
+  if(on.length){
+    h += '<div class="verdict v-urgent"><div class="kicker">Safety gate</div>'
+      +  '<h2>Act on the red flag first</h2>'
+      +  '<p>'+esc(on[0].a)+'</p>'
+      +  '<div class="because">Finding in play: '+esc(on[0].l)+(on.length>1?(' \u00b7 and '+(on.length-1)+' more'):'')+'</div></div>';
+  } else if(!m.rows.length){
+    h += (_offline || !R)
+      ? '<div class="verdict v-open"><div class="kicker">Not scored</div><h2>The engine could not be reached</h2><p>Nothing has been ranked for this presentation yet. Your entries are kept on this device — reconnect and they will be scored.</p></div>'
+      : '<div class="verdict v-open"><div class="kicker">No candidates</div><h2>Nothing to rank</h2><p>The age or sex entered has excluded every candidate for this presentation. Check the patient details.</p></div>';
+  } else {
+    const top = m.rows[0], second = m.rows[1];
+    const gap = second ? top.p/second.p : 99;
+    const settled = top.p >= 0.50 && gap >= 3.0;
+    h += '<div class="verdict '+(settled?'v-lead':'v-open')+'">'
+      +  '<div class="kicker">'+(settled?'Leading diagnosis':'Still open')+'</div>'
+      +  '<h2>'+esc(top.d.n)+'</h2>'
+      +  '<p>'+(settled
+            ? 'The findings entered separate this from the rest of the list. Confirm it with the tests in step 06 rather than treating on the ranking alone.'
+            : 'No candidate has separated yet. The differential below is a shortlist, not an answer \u2014 work through the discriminating points before committing.')
+      +  '</p>'
+      +  '<div class="because">'+pctS(top.p)+' of the candidate set'
+      +  (second ? (' \u00b7 '+(gap>=1.15?(gap.toFixed(1)+'\u00d7 ahead of '+esc(second.d.n)):('level with '+esc(second.d.n)))) : '')
+      +  ' \u00b7 '+m.answered+' finding'+(m.answered===1?'':'s')+' entered</div></div>';
+  }
+
+  /* ranked list */
+  if(m.rows.length){
+    h += '<div class="ranked" style="border:0;border-radius:0;border-top:1px solid var(--line2)">'
+      +  '<h3>The differential<span class="cnt">'+m.rows.length+' candidates</span></h3><ul class="rank-list">';
+    const maxP = m.rows[0].p || 1;
+    m.rows.forEach((r,i) => {
+      const cls = i===0 ? 'top' : (r.p >= 0.10 ? 'mid' : '');
+      let moved = '';
+      if(m.answered > 0){
+        const preRank = m.rows.slice().sort((a,b)=>b.pre-a.pre).findIndex(x => x.d.id === r.d.id);
+        const delta = preRank - i;
+        if(delta >= 2) moved = '<span class="rk-moved up">\u2191'+delta+'</span>';
+        else if(delta <= -2) moved = '<span class="rk-moved down">\u2193'+(-delta)+'</span>';
+      }
+      h += '<li class="rk '+cls+'">'
+        +  '<div class="rk-head"><span class="rk-pos">'+(i+1)+'</span>'
+        +  '<span class="rk-nm">'+esc(r.d.n)+moved+'</span>'
+        +  '<span class="rk-pc">'+pctS(r.p)+'</span></div>'
+        +  '<div class="rk-bar"><i style="width:'+Math.max(2, (r.p/maxP)*100).toFixed(1)+'%"></i></div>';
+      if(i < 3) h += '<div class="rk-why">'+esc(r.d.look)+'</div>';
+      h += '</li>';
+    });
+    /* the reserve. Shown, not hidden, because the commonest failure of a
+       shortlist is that the answer was never on it. */
+    h += '<li class="rk resid"><div class="rk-head"><span class="rk-pos">\u2013</span>'
+      +  '<span class="rk-nm">Something not on this list</span>'
+      +  '<span class="rk-pc">'+pctS(m.residual)+'</span></div>'
+      +  '<div class="rk-bar"><i style="width:'+(isFinite(m.residual) ? Math.max(2,(m.residual/maxP)*100).toFixed(1) : '2')+'%"></i></div>'
+      +  '<div class="rk-why">Held back deliberately. It shrinks as you enter findings and never reaches zero. If nothing here fits what you are looking at, this is the row that is right.</div></li>';
+    h += '</ul>';
+    h += '<div class="rk-tail">These are proportions of this candidate set, not population risks. They assume the presenting morphology has been correctly identified in step 01. Likelihood ratios are tempered before they are combined, because clinical findings are not independent of one another and multiplying them raw produces false certainty.</div>';
+    h += '</div>';
+  }
+  h += '</div>';
+
+  /* discriminating points for the top three */
+  if(m.rows.length && !on.length){
+    h += '<div class="disc"><h3>What separates the top candidates</h3>';
+    m.rows.slice(0,3).forEach(r => {
+      h += '<div class="dcard"><h4>'+esc(r.d.n)+'</h4><span class="pc">'+pctS(r.p)+' \u00b7 '+gradeChip(r.d.c)+' '+esc(r.d.s)+'</span>';
+      h += '<p class="look">'+esc(r.d.look)+'</p>';
+      (r.d.fr||[]).forEach(x => { h += '<div class="dline for"><span class="tag">For</span><span>'+esc(x)+'</span></div>'; });
+      (r.d.ag||[]).forEach(x => { h += '<div class="dline agn"><span class="tag">Against</span><span>'+esc(x)+'</span></div>'; });
+      if(r.d.cf) h += '<div class="dline cfm"><span class="tag">Confirm</span><span>'+esc(r.d.cf)+'</span></div>';
+      const kl = kLayers(r.d);
+      h += kl ? kl : '<div class="klpending">Deeper-reading layers (dermoscopy, histopathology, associations, management) are pending for this diagnosis in the current build.</div>';
+      h += '</div>';
+    });
+    if(m.rows.slice(0,3).some(r => r.d.mgmt))
+      h += '<div class="klfoot">First-line management lines above are an orientation to initial therapy from Andrews, not a prescription — doses are omitted by design; confirm drug choice and dosing against current local guidance and the individual patient before treating.</div>';
+    h += '</div>';
+  }
+
+  /* the presentation-level caution */
+  if(P().flag){
+    h += '<details class="more" open><summary>The error this presentation is known for</summary><div class="body"><p>'+esc(P().flag)+'</p></div></details>';
+  }
+
+  /* currency */
+  const st = staleness();
+  if(st && st.over){
+    h += '<div class="stale"><b>Content is '+st.months+' months old.</b> This library was last checked against source in '+monthWords(DERM.reviewed)+' and is due for review every '+DERM.reviewCycle+' months. Verify anything you are about to act on against current guidance before using it.</div>';
+  }
+
+  h += '<div class="actbar"><button type="button" id="copyBtn">Copy reasoning to clipboard</button>'
+    +  '<button type="button" id="resetBtn">Start a new case</button></div>';
+  return h;
+}
+
+/* ---------- clipboard summary ---------- */
+function summaryText(m){
+  const L = [];
+  L.push('DERMATOLOGY DIFFERENTIAL \u2014 reasoning record');
+  L.push('Presentation: '+P().label);
+  L.push('Patient: '+(S.age?(S.age+' '+({y:'years',m:'months',d:'days'}[S.unit])):'age not entered')
+        +(S.sex?(', '+(S.sex==='f'?'female':'male')):'')
+        +(S.photo?(', phototype '+S.photo):''));
+  const fl = flagsOn();
+  L.push('');
+  L.push('SAFETY GATE');
+  if(fl.length){ fl.forEach(f => L.push('  RED FLAG: '+f.l+' \u2192 '+f.a)); }
+  else if(S.noflag){ L.push('  Red flags reviewed and none present.'); }
+  else { L.push('  NOT COMPLETED \u2014 red flags were not reviewed.'); }
+  const ctx = ctxOn();
+  if(ctx.length){ L.push(''); L.push('CONTEXT'); ctx.forEach(c => L.push('  '+c.l)); }
+  const ans = findAnswered();
+  if(ans.length){
+    L.push(''); L.push('FINDINGS');
+    ans.forEach(a => L.push('  ['+(a.v==='y'?'YES':'NO ')+'] '+a.f.l));
+  }
+  L.push('');
+  L.push('RANKED DIFFERENTIAL (proportion of candidate set)');
+  m.rows.forEach((r,i) => L.push('  '+(i+1)+'. '+r.d.n+' \u2014 '+pctS(r.p)));
+  if(m.rows.length){
+    L.push('');
+    L.push('TO CONFIRM '+m.rows[0].d.n.toUpperCase());
+    L.push('  '+m.rows[0].d.cf);
+    const t = (P().test||[]).find(x => x.tgt === m.rows[0].d.id);
+    if(t){
+      const pt = postTest(m.rows[0].p, t.se, t.sp);
+      L.push('  Test: '+t.l+' (Se '+t.se+'%, Sp '+t.sp+'%)');
+      L.push('    If positive \u2192 '+pctS(pt.pos)+'.  If negative \u2192 '+pctS(pt.neg)+'.');
+      L.push('    Pitfall: '+t.x);
+    }
+    const top = m.rows[0].d;
+    if(top.dsc||top.hp||top.assoc||top.mgmt){
+      L.push('');
+      L.push('DEEPER READING — '+top.n.toUpperCase()+' (Andrews)');
+      if(top.dsc)   L.push('  '+((P().id==='hair')?'Trichoscopy':'Dermoscopy')+': '+top.dsc);
+      if(top.hp)    L.push('  Histopathology: '+top.hp);
+      if(top.assoc) L.push('  Associations/workup: '+top.assoc);
+      if(top.mgmt)  L.push('  First-line management: '+top.mgmt+'  [orientation only — verify dosing and current guidance]');
+    }
+  }
+  const nq = nextQuestion(m);
+  if(nq) L.push(''), L.push('NEXT MOST USEFUL OBSERVATION'), L.push('  '+nq.f.l+' \u2014 separates '+nq.A.n+' from '+nq.B.n+'.');
+  L.push('');
+  L.push('This is a reasoning aid. It ranks a fixed candidate set and does not diagnose.');
+  L.push('Library reviewed '+monthWords(DERM.reviewed)+'. Sources: ranking engine from Fitzpatrick\'s Clinical Dermatology 8e; deeper-reading layers from Andrews\' Diseases of the Skin. Management lines are orientation only.');
+  return L.join('\n');
+}
+
+/* ---------- master render ---------- */
+function paint(){
+  const m = computeRank();
+  renderOfflineNote();
+  const on = flagsOn();
+  document.querySelector('header.top').className = 'top'+(on.length?' acute':'');
+  drawRail();
+
+  const step = S.step;
+  let body = '';
+  const mk = (n,t,q,inner,cls) =>
+    '<section class="step'+(cls?' '+cls:'')+'"><h2><span class="n">'+n+'</span>'+esc(t)
+    + (q?'<span class="stepq">'+esc(q)+'</span>':'')+'</h2><div class="in">'+inner+'</div></section>';
+
+  const cur = n => (S.step === n ? ' cur' : '');
+  body += mk('01','Presentation','what are you looking at?',renderPres(),'s1'+cur(1));
+  body += mk('02','Patient','who is this?',renderPatient(),'s2'+cur(2));
+  body += mk('03','Safety','anything that outranks the ranking?',renderSafety(),'gate s3'+cur(3));
+  body += mk('04','Findings','what have you examined for?',renderFinds(m),'hasmap s4'+cur(4));
+  body += mk('05','Context','what else is true?',renderCtx(),'s5'+cur(5));
+  body += mk('06','Confirm','what would settle it?',renderConfirm(m),'s6'+cur(6));
+
+  /* render() replaces the whole panel, which destroys whatever the user was
+     typing into or had focused. Without this, a two-digit age can never be
+     entered, and answering a finding by keyboard drops focus to <body> - which
+     means tabbing back through the page for every one of forty findings.
+     Elements with an id are restored by id (with the caret); everything else by
+     its position in the panel's focus order, which is stable across a render. */
+  const FOCUSABLE = 'a[href],button,select,input,textarea,[tabindex]:not([tabindex="-1"])';
+  const ae = document.activeElement;
+  const inSteps = ae && $('steps') && $('steps').contains(ae);
+  const keep = inSteps
+    ? { id: ae.id || null,
+        a: ae.selectionStart, b: ae.selectionEnd,
+        idx: [].indexOf.call($('steps').querySelectorAll(FOCUSABLE), ae) }
+    : null;
+
+  $('steps').innerHTML = body;
+  $('answer').innerHTML = renderAnswer(m);
+  wire(m);
+  paintBody(m);
+
+  if(keep){
+    let el = keep.id ? $(keep.id) : null;
+    if(!el && keep.idx >= 0) el = $('steps').querySelectorAll(FOCUSABLE)[keep.idx];
+    if(el){
+      el.focus({preventScroll:true});
+      try{ if(keep.a != null && el.setSelectionRange) el.setSelectionRange(keep.a, keep.b); }catch(e){}
+    }
+  }
+  announce(m);
+  drawMobileBar(m);
+}
+
+/* ---------- the ranking, spoken ---------- */
+/* The differential rewrites itself silently as findings go in. On a screen
+   reader that is a change with no announcement, so the leader and the size of
+   the shortlist are pushed to a polite live region - the headline only, not
+   the whole panel, which would be unusable chatter. */
+let _said = '';
+function announce(m){
+  const el = $('sr'); if(!el) return;
+  const on = flagsOn();
+  let msg;
+  if(on.length) msg = 'Red flag set. ' + on.length + ' safety item' + (on.length>1?'s':'') + ' active. Act on these before the ranking.';
+  else if(!m.rows.length) msg = 'No candidates for this presentation.';
+  else msg = 'Leading candidate ' + m.rows[0].d.n + ', ' + pctS(m.rows[0].p)
+           + ' of ' + m.rows.length + ' candidates. ' + m.answered + ' finding' + (m.answered===1?'':'s') + ' entered.';
+  if(msg !== _said){ _said = msg; el.textContent = msg; }
+}
+
+/* ---------- mobile: the answer, one tap away ---------- */
+function drawMobileBar(m){
+  const b = $('mbar'); if(!b) return;
+  const on = flagsOn();
+  if(!m.rows.length){ b.hidden = true; return; }
+  b.hidden = false;
+  b.className = on.length ? 'acute' : '';
+  const lead = m.rows[0];
+  b.innerHTML = '<span class="mb-l"><span class="mb-k">'
+    + (on.length ? 'Red flag \u2014 open safety' : (m.answered ? 'Leading' : 'Most likely before findings'))
+    + '</span><span class="mb-n">' + esc(lead.d.n) + '</span></span>'
+    + '<span class="mb-p">' + pctS(lead.p) + '</span><span class="mb-go">VIEW \u2197</span>';
+  b.setAttribute('aria-label', 'Leading candidate ' + lead.d.n + ', ' + pctS(lead.p)
+    + '. Activate to jump to the full differential.');
+  b.onclick = () => {
+    const t = document.querySelector('.answer-wrap');
+    if(t) t.scrollIntoView({behavior:'smooth', block:'start'});
+  };
+}
+
+/* ---------- events ---------- */
+function wire(m){
+  /* on a phone only the current panel is open; its header is the toggle */
+  document.querySelectorAll('#steps .step > h2').forEach((h,i) => {
+    h.onclick = () => { S.step = i+1; paint();
+      const el = document.querySelectorAll('#steps .step')[i];
+      if(el && window.matchMedia('(max-width:979px)').matches) el.scrollIntoView({block:'start'});
+    };
+  });
+
+  const sp = $('selPres');
+  if(sp) sp.onchange = async e => {
+    const prev = S.pres;
+    /* the case as entered, so a failed switch can put all of it back */
+    const keep = { flags:S.flags, noflag:S.noflag, ctx:S.ctx, find:S.find, seen:S.seen, R:R };
+    S.pres = e.target.value; S.flags={}; S.noflag=false; S.ctx={}; S.find={}; S.seen={};
+    R = null;
+    try { await loadPresentation(S.pres); }
+    catch(err) {
+      /* The new presentation never arrived. Leaving S.pres pointing at it would
+         make every later scoring run mismatch the loaded rows and report "no
+         candidates" for good, so fall back to what is actually loaded - with
+         the entries restored, or "your entries are kept" below would be false. */
+      _offline = true; _busy = !!(err && err.status === 429);
+      S.pres = prev;
+      if(e.target) e.target.value = prev;
+      S.flags = keep.flags; S.noflag = keep.noflag; S.ctx = keep.ctx; S.find = keep.find; S.seen = keep.seen;
+      R = keep.R;
+    }
+    assessNow();
+  };
+
+  const a = $('pAge'); if(a) a.oninput = e => { S.age = e.target.value; render(); };
+  const u = $('pUnit'); if(u) u.onchange = e => { S.unit = e.target.value; render(); };
+  const sx = $('pSex'); if(sx) sx.onchange = e => { S.sex = e.target.value; render(); };
+  const ph = $('pPhoto'); if(ph) ph.onchange = e => { S.photo = e.target.value; render(); };
+
+  document.querySelectorAll('[data-flag]').forEach(b => {
+    b.onclick = () => { const k = P().id+'|'+b.dataset.flag; S.flags[k] = !S.flags[k]; if(S.flags[k]) S.noflag = false; render(); };
+  });
+  const nf = $('noFlag');
+  if(nf) nf.onclick = () => { S.noflag = !S.noflag; if(S.noflag) S.flags = {}; render(); };
+
+  document.querySelectorAll('[data-ctx]').forEach(b => {
+    b.onclick = () => { const k = b.dataset.ctx; S.ctx[k] = !S.ctx[k]; render(); };
+  });
+
+  document.querySelectorAll('[data-f]').forEach(b => {
+    b.onclick = () => { S.find[P().id+'|'+b.dataset.f] = b.dataset.v; render(); };
+  });
+
+  document.querySelectorAll('[data-go]').forEach(b => {
+    b.onclick = () => {
+      const i = parseInt(b.dataset.go,10);
+      S.step = i;
+      paint();
+      const sec = document.querySelectorAll('#steps .step')[i-1];
+      if(sec && sec.scrollIntoView) sec.scrollIntoView({behavior:'smooth', block:'start'});
+      drawRail();
+    };
+  });
+
+  const cb = $('copyBtn');
+  if(cb) cb.onclick = () => {
+    const t = summaryText(m);
+    if(navigator.clipboard) navigator.clipboard.writeText(t).then(()=>{ cb.textContent='Copied'; setTimeout(()=>cb.textContent='Copy reasoning to clipboard',1600); });
+    else { const ta=document.createElement('textarea'); ta.value=t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); cb.textContent='Copied'; setTimeout(()=>cb.textContent='Copy reasoning to clipboard',1600); }
+  };
+  const rb = $('resetBtn');
+  if(rb) rb.onclick = () => { S.flags={}; S.noflag=false; S.ctx={}; S.find={}; S.age=''; S.sex=''; S.photo=''; S.step=1; render(); if(window.scrollTo) window.scrollTo({top:0,behavior:'smooth'}); };
+}
+
+render();
+
+
+
+/* ---- start: index first, then the presentation the user picks. A failed
+   boot leaves a shell with no controls (paint() never runs), so the banner
+   itself carries the retry; a repeat failure replaces it, not stacks it. ---- */
+async function start(){
+  const old = document.getElementById('bootErr');
+  if(old) old.remove();
+  try{
+    if(!INDEX.length) await loadIndex();
+    if(INDEX.length && !DERM.pres.length){ S.pres = INDEX[0].id; await loadPresentation(S.pres); }
+    await assessNow();
+  }catch(e){
+    _offline = true;
+    const host = document.querySelector('.wrap') || document.body;
+    const b = document.createElement('div');
+    b.id = 'bootErr';
+    b.className = 'offline-note';
+    b.setAttribute('role', 'status');
+    b.textContent = (e && e.status === 429)
+      ? 'The service is busy \u2014 too many requests from this connection in the last minute. Wait a few seconds, then try again. '
+      : 'The differential engine needs a connection \u2014 it could not reach medconsults.ai just now. ';
+    const rb = document.createElement('button');
+    rb.type = 'button'; rb.textContent = 'Try again';
+    rb.onclick = () => { rb.disabled = true; start(); };
+    b.appendChild(rb);
+    host.insertBefore(b, host.firstChild);
+  }
+}
+start();
+
+
+/* Every control in the page calls render(). It now means: re-score on the
+   server, then paint what comes back. paint() is the original renderer,
+   carried over unchanged. */
+function render(){ assessSoon(); }
+</script>
+</body>
+</html>
