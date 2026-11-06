@@ -1,0 +1,64 @@
+# Save this file in the repo as:  .github/workflows/build-apk.yml
+# Every time files are pushed (or you press "Run workflow") GitHub builds the debug APK and
+#   1. keeps it under the run's "Artifacts", and
+#   2. attaches it to a release named "latest" on the repo's main page, so a phone can download it directly.
+name: Build debug APK
+
+on: [push, workflow_dispatch]
+
+permissions:
+  contents: write   # lets the last step publish the APK on the Releases page
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Locate the Android project
+        id: proj
+        run: |
+          f=$(find . -maxdepth 3 \( -name settings.gradle.kts -o -name settings.gradle \) -not -path "./.git/*" | head -n 1)
+          if [ -z "$f" ]; then
+            echo "No settings.gradle(.kts) found. Upload the project files (settings.gradle.kts, build.gradle.kts, app/ ...) to the repo first."
+            exit 1
+          fi
+          echo "dir=$(dirname "$f")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Build the debug APK
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: |
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+            ./gradlew assembleDebug --no-daemon --stacktrace
+          else
+            gradle assembleDebug --no-daemon --stacktrace
+          fi
+
+      - name: Keep the APK as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: derm-offline-debug-apk
+          path: ${{ steps.proj.outputs.dir }}/app/build/outputs/apk/debug/*.apk
+
+      - name: Publish the APK on the Releases page
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest ${{ steps.proj.outputs.dir }}/app/build/outputs/apk/debug/*.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Latest debug build" \
+            --notes "Built automatically from commit $GITHUB_SHA. Open this page on the phone and tap the .apk file."
