@@ -2,6 +2,8 @@
 # Every time files are pushed (or you press "Run workflow") GitHub builds the debug APK and
 #   1. keeps it under the run's "Artifacts", and
 #   2. attaches it to a release named "latest" on the repo's main page, so a phone can download it directly.
+# It installs the Android SDK and Gradle itself with plain commands (no third-party actions), and if a step fails it
+# shows the last lines of the build output as a red error message on the run page.
 name: Build debug APK
 
 on: [push, workflow_dispatch]
@@ -11,39 +13,76 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Locate the Android project
+      - name: Prepare helpers and locate the Android project
         id: proj
         run: |
+          cat > "$RUNNER_TEMP/helpers.sh" <<'EOS'
+          # logged "<title>" <command...>: run a command, stream its output, and on failure repeat the last lines as an error message
+          logged() {
+            local title="$1"; shift
+            local code msg
+            "$@" 2>&1 | tee "$RUNNER_TEMP/last.log"
+            code=${PIPESTATUS[0]}
+            if [ "$code" -ne 0 ]; then
+              msg=$(tail -n 40 "$RUNNER_TEMP/last.log" | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' | head -c 3500)
+              echo "::error title=${title} (exit ${code})::${msg}"
+            fi
+            return "$code"
+          }
+          EOS
           f=$(find . -maxdepth 3 \( -name settings.gradle.kts -o -name settings.gradle \) -not -path "./.git/*" | head -n 1)
           if [ -z "$f" ]; then
-            echo "No settings.gradle(.kts) found. Upload the project files (settings.gradle.kts, build.gradle.kts, app/ ...) to the repo first."
+            echo "::error title=No Android project::No settings.gradle(.kts) found. Upload the project files (settings.gradle.kts, build.gradle.kts, app/ ...) to the repo first."
             exit 1
           fi
           echo "dir=$(dirname "$f")" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
-      - uses: android-actions/setup-android@v3
+      - name: Install the Android SDK
+        run: |
+          source "$RUNNER_TEMP/helpers.sh"
+          export ANDROID_HOME="$HOME/android-sdk"
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          ok=""
+          for v in 11076708 10406996 9477386; do
+            if curl -fsSL -o /tmp/cmdline-tools.zip "https://dl.google.com/android/repository/commandlinetools-linux-${v}_latest.zip"; then ok="$v"; break; fi
+          done
+          if [ -z "$ok" ]; then echo "::error title=Android command-line tools::could not download them from dl.google.com"; exit 1; fi
+          unzip -q /tmp/cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
+          mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --sdk_root="$ANDROID_HOME" --licenses > /dev/null || true
+          logged "sdkmanager install" "$SDKM" --sdk_root="$ANDROID_HOME" --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
 
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.7"
+      - name: Install Gradle 8.7
+        run: |
+          source "$RUNNER_TEMP/helpers.sh"
+          logged "Gradle download" curl -fsSL -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.7-bin.zip
+          unzip -q /tmp/gradle.zip -d "$HOME"
+          echo "$HOME/gradle-8.7/bin" >> "$GITHUB_PATH"
 
       - name: Build the debug APK
         working-directory: ${{ steps.proj.outputs.dir }}
         run: |
+          source "$RUNNER_TEMP/helpers.sh"
+          java -version
           if [ -f gradlew ]; then
             chmod +x gradlew
-            ./gradlew assembleDebug --no-daemon --stacktrace
+            logged "Gradle build" ./gradlew assembleDebug --no-daemon --console=plain --stacktrace
           else
-            gradle assembleDebug --no-daemon --stacktrace
+            gradle --version
+            logged "Gradle build" gradle assembleDebug --no-daemon --console=plain --stacktrace
           fi
 
       - name: Keep the APK as a build artifact
